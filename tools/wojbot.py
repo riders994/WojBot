@@ -1,295 +1,212 @@
+import os
 import json
 import time
-from fbchat import Client, log, models
-import logging
 import random
-from WojBot.tools import message_commands
-from collections import defaultdict
+import logging
+import asyncio
+import numpy as np
+from discord.ext import commands
+from tools.message_commands import cat, echo
 
-SECRET = 'test'
-
-# default globals
-SLEEP = 2
-"""
-self._respond(
-"""
-""",
-    thread_id,
-    thread_type
-)
-"""
+_logger = logging.getLogger('woj_bot')
 
 
-def steep(message, thread_id, thread_type):
-    pass
+PATH = './resources/player_values_2019.json'
+LOTTERIED = 6
+PICK_NAMES = '1st,2nd,3rd,4th,5th,6th,7th,8th,9th,10th,11th,12th'.split(',')
+ADMIN_NICK = os.environ['ADMIN_NICK']
+ADMIN_ID = os.environ['ADMIN_ID']
+PLAYERS = 'a,b,c,d,e,f,g,h,i,j,k,l'.split(',')
+ODDS = [116, 111, 105, 98, 92, 86, 80, 74, 68, 63, 57, 50]
 
 
-class Thread:
-    id = None
-
-class Player(Thread):
-    def __init__(self, name):
-        self.name = name
-
-    def link_thread(self, thread_id):
-        self.id = thread_id
+@commands.command()
+async def instructions(ctx, path='./resources/'):
+    try:
+        with open(path + 'instructions.txt', 'r+') as file:
+            await ctx.send(file.read())
+    except FileNotFoundError:
+        await ctx.send('No instructions found. Sorry!')
 
 
-class Admin(Player):
-    def link_thread(self, thread_id):
-        super().link_thread(thread_id)
+@commands.command()
+async def draft_lottery(ctx, *args, filepath=PATH):
+    if len(args):
+        if args[0] in {'test', '-t', 't'}:
+            await ctx.send('Running test draft')
+            ball_pit = np.arange(1000)
+            np.random.shuffle(ball_pit)
+            selected_players = set()
+            pick = 1
+            i = 0
+            combos = np.array(sum([[PLAYERS[j]] * ODDS[j] for j in range(len(ODDS))], []))
 
-class League:
-    thread = None
-    players_lkup = set()
-    num_players = None
-    conferences = None
-    divisions = None
-    admin = None
-    players = dict()
+            while pick <= LOTTERIED:
+                ball_drawn = ball_pit[i]
+                i += 1
+                player_drawn = combos[ball_drawn]
+                if player_drawn not in selected_players:
+                    selected_players.update(player_drawn)
+                    await ctx.send(player_drawn + ' ' + str(pick))
+                    pick += 1
 
-    def __init__(self, name, admin):
-        self.name = name
-        self.admin = admin
-        pass
+            for player in PLAYERS:
+                if player not in selected_players:
+                    selected_players.update(player)
+                    await ctx.send(player + ' ' + str(pick))
+                    pick += 1
 
-    def set_thread(self, thread_id):
-        if not self.thread:
-            self.thread = thread_id
+        if args[0] == 'verify':
+            await ctx.send('verifying...')
+            if ctx.author.name == ADMIN_NICK and ctx.author.discriminator == ADMIN_ID:
+                try:
+                    with open(filepath, 'rb') as file:
+                        players_dict = json.load(file)
+                except FileNotFoundError:
+                    raise
 
-    def reset_thread(self, thread_id):
-        self.thread = thread_id
+                taken_picks = {0}
+                selected_players = []
 
-    def add_player(self, name, admin=False):
-        if name not in self.players_lkup:
-            self.players_lkup.update(name)
-            if admin:
-                self.admin = Admin(name)
+                i = 0
+                player_pick_dict = {}
+
+                players = players_dict['players']
+                placement = players_dict['placement'].split(',')
+
+                combos = np.array(sum([[player] * odds_prefs[0] for player, odds_prefs in players.items()], []))
+                balls = combos.size
+                ball_pit = np.arange(balls)
+                np.random.shuffle(ball_pit)
+                np.random.shuffle(combos)
+
+                # 5.0 Here's the meat and potatoes
+                #     TODO: Make this cleaner, better, make it a class maybe?
+
+                # 5.1 This way it ends when 6 picks have been lotteried, as the 7th one breaks
+                while len(taken_picks) <= LOTTERIED:
+                    # 5.2 Draws the next player and iterates
+                    ball_drawn = ball_pit[i]
+                    i += 1
+                    player_drawn = combos[ball_drawn]
+
+                    # 5.3 Checks if player has already been drawn
+                    if player_drawn in selected_players:
+                        await ctx.send('Player picked again!')
+                        pass
+                    else:
+                        # 5.4.0 If a new player's name has been drawn, adds them
+                        await ctx.send('{} player picked! I wonder who it is...'.format(PICK_NAMES[len(taken_picks) - 1]))
+                        selected_players.append(player_drawn)
+                        # 5.4.1 Checks their preferences to see which pick they actually get
+                        pick_prefs = players[player_drawn][1]
+                        current_pick = 0
+                        j = 0
+                        while current_pick in taken_picks:
+                            current_pick = pick_prefs[j]
+                            j += 1
+                        # 5.5 Adds it to the record
+                        taken_picks.update([current_pick])
+                        player_pick_dict[PICK_NAMES[current_pick - 1]] = player_drawn
+                # That's the end of the lottery
+
+                # Just for fun, calculate the probability of the result. Rull easy.
+                prob = 1
+                for name in selected_players:
+                    k = players[name][0]
+                    player_prob = k/balls
+                    prob *= player_prob
+                    balls -= k
+                await ctx.send('The probability of this result was {}%!'.format(round(prob * 100, 5)))
+
+                # 6.0 This is a similar process, but for the non-lotteried picks. These are
+                #     by playoff finish.
+                for name in placement:
+                    if name not in selected_players:
+                        selected_players.append(name)
+                        pick_prefs = players[name][1]
+                        current_pick = 0
+                        while current_pick in taken_picks:
+                            current_pick = pick_prefs[0]
+                            pick_prefs = pick_prefs[1:]
+                        taken_picks.update([current_pick])
+                        player_pick_dict[PICK_NAMES[current_pick - 1]] = name
+
+                # 7.0 Finale time!
+                #     This sends the final lottery results to the group, in order from last
+                #     to first!
+
+                # 7.1 I put my thang down flip it and reverse it
+                PICK_NAMES.reverse()
+                for i, name in enumerate(PICK_NAMES):
+                    await ctx.send('The {} pick goes to...'.format(name))
+                    # 7.2 sleeps added to build DRAMA
+                    s1 = i/(i + 1)
+                    time.sleep(s1)
+                    await ctx.send('{}!'. format(player_pick_dict[name]))
+                    if i:
+                        time.sleep(s1 ** 0.5)
             else:
-                self.players.update({name: Player(name)})
+                await ctx.send('Verification failed, please try again')
 
-    def link_player(self, name, thread_id):
-        self.players[name].link_thread(thread_id)
 
-class WojBot(Client):
-    secret = SECRET
-    players = defaultdict(set)
-    admins = dict()
-    leagues = dict()
-    authorized_leagues = dict()
-    in_funnel_users = dict()
+TOKEN = os.environ['DISCORD_TOKEN']
+COMMANDS = [cat, echo, draft_lottery]
+FLAG = '$'
 
-    def __init__(
-            self,
-            email,
-            password,
-            sleep=0.7,
-            instructions_path='./',
-            user_agent=None,
-            max_tries=5,
-            session_cookies=None,
-            logging_level=logging.INFO,
-    ):
-        self.sleep = sleep
-        self.instr = instructions_path
-        super().__init__(
-            email,
-            password,
-            user_agent,
-            max_tries,
-            session_cookies,
-            logging_level,
-        )
 
-    def send(self, message, thread_id=None, thread_type=ThreadType.USER):
-        time.sleep(self.sleep)
-        super().send(message, thread_id, thread_type)
+class WojBot(commands.Bot):
+    flag = FLAG
 
-    def _cu_step_1(self, message, thread_id, thread_type):
-        yes = message[0].lower()
-        if yes == 'y':
-            self._respond(
-                """
-                What's the secret password?
-                """,
-                thread_id,
-                thread_type
-            )
-            self.admins.update({thread_id: []})
+    def __init__(self):
+        super().__init__(command_prefix=FLAG)
 
-        else:
-            self._respond(
-                """
-                Cool! Which league do you belong to?
-                """,
-                thread_id,
-                thread_type
-            )
+    async def on_ready(self):
+        print('Logged in as')
+        print(self.user.name)
+        print(self.user.id)
+        print('------')
 
-    def _cu2_verify_league(self, name):
-        res = False
-        for league in self.leagues.keys():
-            l = league['name']
-            name_check = l.name
-            res += (name_check == name)
-        return res
+    async def on_message(self, message):
+        if message.author.id == self.user.id:
+            return
+        rcv = message.content
+        if rcv.startswith(self.flag):
+            print('command received')
+            print(message)
+            if rcv.startswith('$add'):
+                addends = rcv.split(' ')[1:]
+                s = 0
+                for a in addends:
+                    try:
+                        s += int(a)
+                    except ValueError:
+                        await message.channel.send("{} isn't a number, dumbass".format(a))
+                await message.channel.send(s)
 
-    def _cu_step_2(self, message, thread_id, thread_type):
-        if thread_id in self.admins.keys():
-            if message == self.secret:
-                self._respond(
-                    """
-                    Great! Let's get started. What's the name of this league?
-                    """,
-                    thread_id,
-                    thread_type
-                )
-            else:
-                self._respond(
-                    """
-                    https://www.youtube.com/watch?v=RfiQYRn7fBg
-                    """,
-                    thread_id,
-                    thread_type
-                )
-                del self.in_funnel_users[thread_id]
-        else:
-            if self._cu2_verify_league(message):
-                self.players[thread_id].update(message)
-                self._respond(
-                    """
-                    Great! What's your name?
-                    """,
-                    thread_id,
-                    thread_type
-                )
-            else:
-                self._respond(
-                    """
-                    Looks like that league name isn't recognized. Check your spelling, or check with the commish!
-                    """,
-                    thread_id,
-                    thread_type
-                )
-                self.in_funnel_users[thread_id] = 2
+            if message.content.startswith('$guess'):
+                await message.channel.send('Guess a number between 1 and 10.')
 
-    def _cu_step_3(self, message, thread_id, thread_type):
-        if thread_id in self.admins.keys():
-            self.authorized_leagues[thread_id].append(message)
-            self._create_league(message, thread_id)
-            self._respond(
-                """
-                Congratulations! The league {} has been created. This is your admin id: {}
-                """.format(message, thread_id),
-                thread_id,
-                thread_type
-            )
-        else:
-            league = self.leagues[self.players[thread_id]]
-            if message in league.player_lkup:
-                league.link_player(message, thread_id)
+                def is_correct(m):
+                    return m.author == message.author and m.content.isdigit()
 
-    def _create_user(self, thread_id, thread_type, details, message):
-        if thread_id in self.in_funnel_users.keys():
-            step = self.in_funnel_users[thread_id]
-            stepper = steep
-            self.in_funnel_users[thread_id] = step + 1
-            stepper(message, thread_id, thread_type)
+                answer = random.randint(1, 10)
 
-        else:
-            self.in_funnel_users.update({thread_id: 1})
-            self._respond("""
-                          It looks like you're a new user. Are you creating a new league?
-                          
-                          y/n?
-                          """, thread_id, thread_type
-                          )
+                try:
+                    guess = await self.wait_for('message', check=is_correct, timeout=5.0)
+                except asyncio.TimeoutError:
+                    return await message.channel.send('Sorry, you took too long it was {}.'.format(answer))
 
-    def _listen_user(self, author_id, message, thread_id, thread_type, details=None):
-        response = ''
-        if author_id in self.admins.keys():
-            pass
-        elif author_id in self.players.keys():
-            pass
-        else:
-            self._create_user(thread_id, thread_type, details, message)
-
-        return response
-
-    def _create_league(self, name, admin):
-        self.leagues[name] = League(name, admin)
-
-    def _link_league(self, thread, details):
-        name = details['name']
-        admin = self.leagues[name].admin
-        if thread not in self.admins[admin]:
-            self.admins[admin].append(thread)
-        if details.get('r'):
-            self.leagues[name].reset_thread(thread)
-        else:
-            self.leagues[name].set_thread(thread)
-
-    @staticmethod
-    def _check_create(message):
-        return message_commands.parse_message(message).keys()[0] in {'create', 'create_league', '!c'}
-
-    @staticmethod
-    def _check_link(message):
-        return message_commands.parse_message(message).keys()[0] in {'link', 'link_league', '!l'}
-
-    def _listen_league(self, author_id, message, thread_id, details):
-        response = ''
-        is_thread = 0
-        for lname, league in self.leagues.items():
-            is_thread += league.thread == thread_id
-
-        if is_thread > 0:
-            if author_id in self.authorized_leagues.keys():
-                if self._check_link(message):
-                    self._link_league(thread_id, details)
-                response = 'Thank you for linking this league!'
-            else:
-                response = 'This league is not authorized yet'
-        return response
-
-    def _parse_incoming(self, author_id, message, thread_id, thread_type):
-        response = ''
-        woj_check = message.split(' ')[0]
-        if woj_check == '!wojbot':
-            command = message_commands.parse_message(message)
-            if thread_type == 'USER':
-                self._listen_user(author_id, message, thread_id, thread_type, command)
-            elif thread_type == 'GROUP':
-                response = self._listen_league(author_id, message, thread_id, command)
-        else:
-            if thread_type == 'USER':
-                self._listen_user(author_id, message, thread_id, thread_type)
-        return response
-
-    def _respond(self, message, thread_id, thread_type):
-        time.sleep(self.sleep * random.random())
-        self.send(models.Message(text=message), thread_id=thread_id, thread_type=thread_type)
-
-    def onMessage(self, author_id, message_object, thread_id, thread_type, **kwargs):
-        time.sleep(self.sleep * random.random())
-        self.markAsDelivered(thread_id, message_object.uid)
-        print('boop')
-        time.sleep(self.sleep * random.random())
-        self.markAsRead(thread_id)
-
-        print('poob')
-        log.info("{} from {} in {}".format(message_object, thread_id, thread_type.name))
-        print('poop')
-        # If you're not the author, echo
-        if author_id != self.uid and thread_id in self.recognized_threads:
-            print('boob')
-            message = self._parse_incoming(author_id, message_object.text, thread_id)
-            if len(message):
-                self._respond(message, thread_id, thread_type)
+                if int(guess.content) == answer:
+                    await message.channel.send('You are right!')
+                else:
+                    await message.channel.send('Oops. It is actually {}.'.format(answer))
+        await self.process_commands(message)
 
 
 if __name__ == '__main__':
-    with open('./creds/login.json', 'rb') as file:
-        credentials = json.load(file)
-
-    test = WojBot(credentials['uid'], credentials['pwd'], SLEEP)
+    bot = WojBot()
+    # bot = WojCmd()
+    for cmd in COMMANDS:
+        bot.add_command(cmd)
+    bot.run(TOKEN)
