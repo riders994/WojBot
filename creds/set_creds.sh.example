@@ -1,3 +1,5 @@
 export DISCORD_TOKEN=""
 export DISCORD_ID=""
 export DISCORD_OAUTH=""
+export ADMIN_NICK=""
+export ADMIN_ID=""

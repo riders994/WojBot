@@ -33,8 +33,8 @@ async def instructions(ctx, path='./resources/'):
 async def draft_lottery(ctx, *args, filepath=PATH):
     if len(args):
         if args[0] in {'test', '-t', 't'}:
-            await ctx.send('Running test draft')
             ball_pit = np.arange(1000)
+            await ctx.send('Running test draft')
             np.random.shuffle(ball_pit)
             selected_players = set()
             pick = 1
@@ -96,7 +96,8 @@ async def draft_lottery(ctx, *args, filepath=PATH):
                         pass
                     else:
                         # 5.4.0 If a new player's name has been drawn, adds them
-                        await ctx.send('{} player picked! I wonder who it is...'.format(PICK_NAMES[len(taken_picks) - 1]))
+                        await ctx.send('{} player picked! I wonder who it is...'.format(PICK_NAMES[len(taken_picks) - 1]
+                                                                                        ))
                         selected_players.append(player_drawn)
                         # 5.4.1 Checks their preferences to see which pick they actually get
                         pick_prefs = players[player_drawn][1]
