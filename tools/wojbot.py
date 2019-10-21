@@ -6,7 +6,7 @@ import logging
 import asyncio
 import numpy as np
 from discord.ext import commands
-from tools.message_commands import cat, echo
+from message_commands import cat, echo
 
 _logger = logging.getLogger('woj_bot')
 
@@ -172,6 +172,19 @@ class WojBot(commands.Bot):
         if message.author.id == self.user.id:
             return
         rcv = message.content
+        dad = rcv.find('I am') + 1
+        if not dad:
+            dad = rcv.find('i am') + 1
+        if dad:
+            dad += 1
+        if not dad:
+            dad = rcv.find("I'm") + 1
+        if not dad:
+            dad = rcv.find("i'm") + 1
+        if dad:
+            dad += 3
+            msg = "Hi {}, I'm dad".format(message.content[dad:].capitalize())
+            await message.channel.send(msg)
         if rcv.startswith(self.flag):
             print('command received')
             print(message)
