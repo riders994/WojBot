@@ -1,2 +1,3 @@
 creds/set_creds.sh
 tools/__pycache__
+*.csv

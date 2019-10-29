@@ -7,16 +7,31 @@ import asyncio
 import numpy as np
 from discord.ext import commands
 from message_commands import cat, echo
+from yahooelosystem import YahooEloSystem
+from commonfuncs import create_flag_dict
+
+
+LEAGUE = '12682'
+PLAYER_INFO = './resources/players.json'
+
+with open(PLAYER_INFO, "rb") as data:
+    PLAYERS = json.load(data)
+
+FLAG_MAP = {
+    'week': {
+        'w', 'week'
+    }
+}
 
 _logger = logging.getLogger('woj_bot')
 
 
-PATH = './resources/player_values_2019.json'
+PATH = './resources/drafter_values_2019.json'
 LOTTERIED = 6
 PICK_NAMES = '1st,2nd,3rd,4th,5th,6th,7th,8th,9th,10th,11th,12th'.split(',')
 ADMIN_NICK = os.environ['ADMIN_NICK']
 ADMIN_ID = os.environ['ADMIN_ID']
-PLAYERS = 'a,b,c,d,e,f,g,h,i,j,k,l'.split(',')
+DRAFTERS = 'a,b,c,d,e,f,g,h,i,j,k,l'.split(',')
 ODDS = [116, 111, 105, 98, 92, 86, 80, 74, 68, 63, 57, 50]
 
 
@@ -39,7 +54,7 @@ async def draft_lottery(ctx, *args, filepath=PATH):
             selected_players = set()
             pick = 1
             i = 0
-            combos = np.array(sum([[PLAYERS[j]] * ODDS[j] for j in range(len(ODDS))], []))
+            combos = np.array(sum([[DRAFTERS[j]] * ODDS[j] for j in range(len(ODDS))], []))
 
             while pick <= LOTTERIED:
                 ball_drawn = ball_pit[i]
@@ -50,7 +65,7 @@ async def draft_lottery(ctx, *args, filepath=PATH):
                     await ctx.send(player_drawn + ' ' + str(pick))
                     pick += 1
 
-            for player in PLAYERS:
+            for player in DRAFTERS:
                 if player not in selected_players:
                     selected_players.update(player)
                     await ctx.send(player + ' ' + str(pick))
@@ -151,8 +166,34 @@ async def draft_lottery(ctx, *args, filepath=PATH):
                 await ctx.send('Verification failed, please try again')
 
 
+@commands.command()
+async def run_elos(ctx, *args):
+    if len(args):
+        if args[0] in {'test', '-t', 't'}:
+            await ctx.send("There's no test for this yet, dumbass")
+    if args[0] == 'verify':
+        await ctx.send('verifying...')
+        if ctx.author.name == ADMIN_NICK and ctx.author.discriminator == ADMIN_ID:
+            flag_dict = create_flag_dict(args)
+            for check in FLAG_MAP['week']:
+                week = flag_dict.get(check)
+                if week:
+                    week = week[0]
+                    break
+            await ctx.send(week)
+            runner = YahooEloSystem(league=LEAGUE, week=week, players=PLAYERS)
+            runner.run()
+            await ctx.send("Here are this week's Elo ratings so far.")
+            df = runner.elo_calc.weekly_frame
+            names = df.index
+            elos = df['week_' + week]
+            for name in names:
+                await ctx.send("{} has an Elo of {}".format(name, round(elos[name], 2)))
+        else:
+            await ctx.send('Verification failed, please try again')
+
 TOKEN = os.environ['DISCORD_TOKEN']
-COMMANDS = [cat, echo, draft_lottery]
+COMMANDS = [cat, echo, draft_lottery, run_elos]
 FLAG = '$'
 
 
