@@ -222,6 +222,10 @@ class WojBot(commands.Bot):
             dad = rcv.find("I'm") + 1
         if not dad:
             dad = rcv.find("i'm") + 1
+        if not dad:
+            dad = rcv.find('I’m') + 1
+        if not dad:
+            dad = rcv.find('i’m') + 1
         if dad:
             dad += 3
             msg = "Hi {}, I'm dad".format(message.content[dad:].capitalize())
