@@ -238,7 +238,10 @@ class WojBot(commands.Bot):
                 s = 0
                 for a in addends:
                     try:
-                        s += int(a)
+                        try:
+                            s += int(a)
+                        except ValueError:
+                            s += float(a)
                     except ValueError:
                         await message.channel.send("{} isn't a number, dumbass".format(a))
                 await message.channel.send(s)
