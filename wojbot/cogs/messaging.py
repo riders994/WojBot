@@ -40,10 +40,13 @@ class Messaging(commands.Cog, name='Messaging Commands'):
 
     @commands.command()
     async def cat(self, ctx):
-        if self.load:
-            with open(self.load, 'rb') as file:
-                cats = set(file.readlines())
-        else:
+        try:
+            if self.load:
+                with open(self.load + 'cat_gifs.txt', 'rb') as file:
+                    cats = set(file.readlines())
+            else:
+                cats = set()
+        except FileNotFoundError:
             cats = set()
         cats.update({"https://media.giphy.com/media/JIX9t2j0ZTN9S/giphy.gif"})
         await ctx.send(random.choice(list(cats)))
