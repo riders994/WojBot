@@ -9,6 +9,8 @@ def create_flag_dict(messages):
         if msg[0] == '-':
             key = msg.replace('-', '')
             flagged = 1
+        if msg[0] == '+':
+            res[msg.replace('+', '')].append(True)
         elif flagged:
             res[key].append(msg)
     return res

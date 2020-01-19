@@ -1,3 +1,4 @@
 creds/set_creds.sh
-tools/__pycache__
+wojbot/cogs/__pycache__
 *.csv
+discord.log
