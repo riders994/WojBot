@@ -14,6 +14,9 @@ FLAG_MAP = {
 
 
 class Analytics(commands.Cog, name="Analytics"):
+    """
+    This Cog will run my league analytics. Can't wait to expand with the league, player, and email cogs later
+    """
     def __init__(self, bot):
         self.bot = bot
         self.info = bot.league_info
@@ -21,6 +24,9 @@ class Analytics(commands.Cog, name="Analytics"):
 
     @commands.command()
     async def run_elos(self, ctx, *, flags: str):
+        """
+        Loads a dataframe of Elos, or runs a Selenium scraper to get ratings.
+        """
         await ctx.send('verifying...')
         verifier = self.bot.get_cog('Verify')
         if verifier is not None:

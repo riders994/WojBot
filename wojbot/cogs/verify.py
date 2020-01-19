@@ -8,6 +8,12 @@ DEFAULT_ROLES = [
 
 
 class Verify(commands.Cog, name='Verify'):
+    """
+    This is a cog for use in other cogs. It verifies that the person running the command has authority to, based on
+    whatever structure the league owner wants.
+
+    TODO: find a way to give an option for commissioner.
+    """
     def __init__(self, bot):
         self.bot = bot
         self.roles = bot.higherups + DEFAULT_ROLES
@@ -19,7 +25,7 @@ class Verify(commands.Cog, name='Verify'):
             verified += role.name in self.roles
         return bool(verified)
 
-    async def admin(self, member):
+    async def commissioner(self, member):
         roles = member.roles
         verified = 0
         for role in roles:

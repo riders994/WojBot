@@ -9,7 +9,9 @@ class MembersCog(commands.Cog, name="Member Commands"):
     @commands.command()
     @commands.guild_only()
     async def joined(self, ctx, *, member: discord.Member = None):
-        """Says when a member joined."""
+        """
+        Says when a member joined.
+        """
 
         if member is None:
             member = ctx.author
@@ -19,7 +21,9 @@ class MembersCog(commands.Cog, name="Member Commands"):
     @commands.command(name='top_role', aliases=['toprole'])
     @commands.guild_only()
     async def show_toprole(self, ctx, *, member: discord.Member = None):
-        """Simple command which shows the members Top Role."""
+        """
+        Simple command which shows the members Top Role.
+        """
 
         if member is None:
             member = ctx.author
@@ -29,7 +33,9 @@ class MembersCog(commands.Cog, name="Member Commands"):
     @commands.command(name='roles', aliases=['show_roles', 'list_roles'])
     @commands.guild_only()
     async def show_roles(self, ctx, *, member: discord.Member = None):
-        """Simple command which shows the members roles"""
+        """
+        Simple command which shows the members roles
+        """
 
         if member is None:
             member = ctx.author
@@ -39,8 +45,10 @@ class MembersCog(commands.Cog, name="Member Commands"):
     @commands.command(name='perms', aliases=['perms_for', 'permissions'])
     @commands.guild_only()
     async def check_permissions(self, ctx, *, member: discord.Member = None):
-        """A simple command which checks a members Guild Permissions.
-        If member is not provided, the author will be checked."""
+        """
+        A simple command which checks a members Guild Permissions.
+        If member is not provided, the author will be checked.
+        """
 
         if not member:
             member = ctx.author

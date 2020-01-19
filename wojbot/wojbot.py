@@ -37,6 +37,9 @@ LEAGUE_INFO = {
 
 
 class WojBot(commands.Bot):
+    """
+    This is WojBot, hear him roar! He is and forever will be my masterpiece.
+    """
     higherups = [
 
     ]
@@ -53,9 +56,16 @@ class WojBot(commands.Bot):
     league_info = LEAGUE_INFO
 
     def __init__(self, load='./resources'):
+        """
+        Loads up WojBot
+        :param load: Directory to load files from.
+
+        TODO: Convert all loads to use os package best practices
+        """
         super().__init__(command_prefix=FLAG, description=DESCRIPTION)
         self.load = load
 
+        # how the fuck do CLAs work?
         # if load:
         #     self.load = self.options['load']
 
@@ -64,7 +74,7 @@ class WojBot(commands.Bot):
 
         logger.info(f'\n\nLogged in as: {self.user.name} - {self.user.id}\nVersion: {discord.__version__}\n')
 
-        # Changes our bots Playing Status. type=1(streaming) for a standard game you could remove type and url.
+        # Need to come up with something better for this
         # await self.change_presence(activity=discord.Streaming(name='Cogs Example', url='https://twitch.tv/kraken'))
         logger.info(f'Successfully logged in and booted...!')
 

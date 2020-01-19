@@ -1,5 +1,9 @@
 from collections import defaultdict
 
+"""
+Common functions that could be used amongst different Cogs
+"""
+
 
 def create_flag_dict(messages):
     res = defaultdict(list)

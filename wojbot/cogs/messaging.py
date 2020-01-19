@@ -3,6 +3,9 @@ import random
 
 
 class Messaging(commands.Cog, name='Messaging Commands'):
+    """
+    These are the commands associated with sending and receiving messages at a basic level.
+    """
     def __init__(self, bot):
         self.bot = bot
         self._last_member = None
@@ -10,6 +13,11 @@ class Messaging(commands.Cog, name='Messaging Commands'):
 
     @commands.Cog.listener()
     async def on_message(self, message):
+        """
+        Dadjoke detection lies within
+        :param message: Scans the message for dad-jokable material
+        :return: Sends a message
+        """
         if message.author.id == self.bot.user.id:
             return
         rcv = message.content
@@ -33,6 +41,9 @@ class Messaging(commands.Cog, name='Messaging Commands'):
 
     @commands.command()
     async def echo(self, ctx, *args):
+        """
+        Basic echo function. Replies with the message after the command. Or not.
+        """
         if len(args):
             await ctx.send(' '.join(args))
         else:
@@ -40,6 +51,9 @@ class Messaging(commands.Cog, name='Messaging Commands'):
 
     @commands.command()
     async def cat(self, ctx):
+        """
+        Sends a cat gif. Eventually there will be more.
+        """
         try:
             if self.load:
                 with open(self.load + 'cat_gifs.txt', 'rb') as file:
@@ -53,6 +67,9 @@ class Messaging(commands.Cog, name='Messaging Commands'):
 
     @commands.command()
     async def add(self, ctx, *, addends: str):
+        """
+        Adds some fuckin numbers together you idiot.
+        """
         s = 0
         addends = addends.replace(',', '').split(' ')
         for a in addends:
