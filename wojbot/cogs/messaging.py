@@ -9,7 +9,7 @@ class Messaging(commands.Cog, name='Messaging Commands'):
     def __init__(self, bot):
         self.bot = bot
         self._last_member = None
-        self.load = bot.load
+        self.load = bot.path
 
     @commands.Cog.listener()
     async def on_message(self, message):

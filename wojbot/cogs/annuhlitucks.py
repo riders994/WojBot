@@ -1,7 +1,7 @@
 import pandas as pd
 from discord.ext import commands
 from .commonfuncs import create_flag_dict
-# from yahooelosystem import YahooEloSystem
+from yahooelosystem import YahooEloSystem
 
 FLAG_MAP = {
     'week': {
@@ -9,36 +9,71 @@ FLAG_MAP = {
     },
     'load': {
         'load', 'l'
+    },
+    'override': {
+        'o'
     }
 }
 
 
 class Analytics(commands.Cog, name="Analytics"):
+
+    last_league = None
+    league_info = None
+    loaded = False
+    yes = None
+
     """
     This Cog will run my league analytics. Can't wait to expand with the league, player, and email cogs later
     """
     def __init__(self, bot):
         self.bot = bot
         self.info = bot.league_info
-        self.load = bot.load
+        self.path = bot.path
+        self.verifier = self.bot.get_cog('Verify')
+        self.loader = self.bot.get_cog('Load')
+
+    def _setup_elos(self, flag_dict, ctx):
+
+        if not self.loaded:
+            self.loader.load_league(ctx, self.last_league)
+        for check in FLAG_MAP['week']:
+            week = flag_dict.get(check)
+            if week:
+                week = week[0]
+                break
+        for check in FLAG_MAP['override']:
+            ovr = flag_dict.get(check)
+            if ovr:
+                ovr = ovr[0]
+                break
+
+        if not self.yes:
+            self.yes = YahooEloSystem(
+                self.league_info, week, self.bot.recycling.get('scraper'), self.bot.creds,
+                self.bot.mode, self.bot.path.replace('resources', '')
+            )
+            self.bot.recycling.update({'elo_system': self.yes})
+            self.bot.rc = True
+        return ovr
 
     @commands.command()
     async def run_elos(self, ctx, *, flags: str):
         """
-        Loads a dataframe of Elos, or runs a Selenium scraper to get ratings.
+        Loads a dataframe of Elos, or runs a scraper to get ratings.
         """
         await ctx.send('verifying...')
-        verifier = self.bot.get_cog('Verify')
-        if verifier is not None:
-            permed = await verifier.verify(ctx.author)
+
+        if self.verifier is not None:
+            permed = await self.verifier.verify(ctx.author)
             if permed:
                 flag_dict = create_flag_dict(flags)
                 df = None
                 for check in FLAG_MAP['load']:
                     load = flag_dict.get(check)
                     if load:
-                        if self.load:
-                            df = pd.read_csv(self.load + '/weekly_elos.csv')
+                        if self.path:
+                            df = pd.read_csv(self.path + '/weekly_elos.csv')
                         else:
                             await ctx.send('Cannot load Elo frame, running scraper')
                 for check in FLAG_MAP['week']:
@@ -49,12 +84,9 @@ class Analytics(commands.Cog, name="Analytics"):
                 await ctx.send(week)
 
                 if not df:
-                    pass
-                    league_server = ctx.guild.id
-                    # runner = YahooEloSystem(league=self.info[league_server]['league'], week=week,
-                    #                         players=self.info[league_server]['players'])
-                    # runner.run()
-                    # df = runner.elo_calc.weekly_frame
+                    ovr = self._setup_elos(flag_dict, ctx)
+                    self.yes.run(ovr)
+                    df = self.yes.elo_calc.weekly_frame
 
                 await ctx.send(f"Here are the Elo ratings for week {week}.")
                 names = df.index

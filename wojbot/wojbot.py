@@ -4,6 +4,7 @@ import logging
 import os
 import json
 import traceback
+import pandas as pd
 
 logger = logging.getLogger('discord')
 logger.setLevel(logging.DEBUG)
@@ -17,62 +18,113 @@ FLAG = '$'
 EXTENSIONS = [
     'cogs.messaging',
     'cogs.verify',
-    'cogs.annuhlitucks',
+    # 'cogs.annuhlitucks',
     'cogs.players',
     'cogs.members',
     'cogs.league',
     'cogs.rumors',
 ]
-PLAYER_INFO = './resources/players.json'
-
-with open(PLAYER_INFO, "rb") as data:
-    PLAYERS = json.load(data)
-
-LEAGUE_INFO = {
-    '140333786381418496': {
-        'league': '12682',
-        'players':  PLAYERS
-    }
+PARAMS = {
+    'consumer_key': os.environ.get('CONSUMER_KEY'),
+    'consumer_secret': os.environ.get('CONSUMER_SECRET'),
+    'token_time': os.environ.get('TOKEN_TIME'),
+    'token_type': os.environ.get('TOKEN_TYPE'),
+    'refresh_token': os.environ.get('REFRESH_TOKEN')
 }
+
+MODES = {'csv', 'sql'}
+TABLES = ['weekly_elo', 'leagues', 'players', 'teams']
 
 
 class WojBot(commands.Bot):
     """
     This is WojBot, hear him roar! He is and forever will be my masterpiece.
     """
+
+    creds = None
+
     higherups = [
 
     ]
-    options = [
-        (('-l', '--load'), dict(type=str, dest='load', default='./resources',
-                                help="""
-                                Sets a destination to load files from. This should be a home directory.
-                                  
-                                TODO: Include a guide on the file structure
-                                TODO: Add SQL functionality
-                                """))
-    ]
 
-    league_info = LEAGUE_INFO
+    data_model = {
 
-    def __init__(self, load='./resources'):
+    }
+
+    garbage = dict()
+
+    recycling = dict()
+    rc = False
+
+    compost = dict()
+    cc = False
+
+    def __init__(self, path='resources', mode='.csv', creds=None):
         """
         Loads up WojBot
-        :param load: Directory to load files from.
+        :param path: Directory to load files from.
 
         TODO: Convert all loads to use os package best practices
         """
         super().__init__(command_prefix=FLAG, description=DESCRIPTION)
-        self.load = load
+        self.path = path
+        self.mode = mode
+        self._load_data_model()
+        if creds:
+            try:
+                self.params = self._load_creds(creds)
+            except ValueError:
+                raise
+        else:
+            self.params = PARAMS
 
         # how the fuck do CLAs work?
         # if load:
         #     self.load = self.options['load']
 
+    @staticmethod
+    def _load_creds(creds):
+        if isinstance(creds, str):
+            try:
+                with open(os.path.join(os.getcwd(), creds), 'rb') as file:
+                    dcreds = json.load(file)
+            except FileNotFoundError:
+                dcreds = json.loads(creds)
+        elif isinstance(creds, dict):
+            dcreds = creds
+        else:
+            raise ValueError
+        return dcreds
+
+    def _load_pd(self):
+        for table in TABLES:
+            if table == 'weekly_stats':
+                pass
+            try:
+                frame = pd.read_csv(os.path.join(self.path, table + self.mode), index_col=0)
+                self.data_model.update({table: frame})
+            except FileNotFoundError:
+                pass
+        self.loaded = True
+
+    def _load_sql(self):
+        for table in TABLES:
+            if table == 'weekly_stats':
+                pass
+            frame = pd.read_csv(os.path.join(self.path, table + self.mode), index_col=0)
+            self.data_model.update({table: frame})
+        self.loaded = True
+
+    def _load_data_model(self):
+        if self.mode == '.csv':
+            self._load_pd()
+        elif self.mode == '.sql':
+            self._load_sql()
+
     async def on_ready(self):
         """http://discordpy.readthedocs.io/en/rewrite/api.html#discord.on_ready"""
 
-        logger.info(f'\n\nLogged in as: {self.user.name} - {self.user.id}\nVersion: {discord.__version__}\n')
+        logger.info(f'Logged in as: {self.user.name} - {self.user.id}\nVersion: {discord.__version__}')
 
         # Need to come up with something better for this
         # await self.change_presence(activity=discord.Streaming(name='Cogs Example', url='https://twitch.tv/kraken'))
