@@ -18,10 +18,10 @@ FLAG = '$'
 EXTENSIONS = [
     'cogs.messaging',
     'cogs.verify',
-    # 'cogs.annuhlitucks',
-    'cogs.players',
     'cogs.members',
-    'cogs.league',
+    'cogs.commish',
+    'cogs.players',
+    'cogs.annuhlitucks',
     'cogs.rumors',
 ]
 PARAMS = {
@@ -35,6 +35,20 @@ PARAMS = {
 MODES = {'csv', 'sql'}
 TABLES = ['weekly_elo', 'leagues', 'players', 'teams']
 
+FLAG_MAP = {
+    'week': {
+        'w', 'week'
+    },
+    'load': {
+        'load', 'l'
+    },
+    'override': {
+        'o'
+    },
+    'silent': {
+        's', 'silent'
+    }
+}
 
 class WojBot(commands.Bot):
     """
@@ -46,6 +60,8 @@ class WojBot(commands.Bot):
     higherups = [
 
     ]
+
+    flag_map = FLAG_MAP
 
     data_model = {
 
@@ -120,6 +136,16 @@ class WojBot(commands.Bot):
             self._load_pd()
         elif self.mode == '.sql':
             self._load_sql()
+
+    def _dump_pd(self):
+        for key, value in self.data_model.items():
+            value.to_csv(os.path.join(self.path, key + self.mode))
+
+    def dump_data_model(self):
+        if self.mode == '.csv':
+            self._dump_pd()
+        elif self.mode == '.sql':
+            pass
 
     async def on_ready(self):
         """http://discordpy.readthedocs.io/en/rewrite/api.html#discord.on_ready"""

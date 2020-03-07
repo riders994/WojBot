@@ -18,14 +18,18 @@ class Verify(commands.Cog, name='Verify'):
         self.bot = bot
         self.roles = bot.higherups + DEFAULT_ROLES
 
-    async def verify(self, member):
+    async def verify(self, ctx):
+        member = ctx.author
+        await ctx.send('Verifying permissions for {}...'.format(member))
         roles = member.roles
         verified = 0
         for role in roles:
             verified += role.name in self.roles
         return bool(verified)
 
-    async def commissioner(self, member):
+    async def commissioner(self, ctx):
+        member = ctx.author
+        await ctx.send('Verifying commissioner permissions for {}...'.format(member))
         roles = member.roles
         verified = 0
         for role in roles:
