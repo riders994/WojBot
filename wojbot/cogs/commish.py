@@ -90,6 +90,11 @@ class League(commands.Cog, name='Commissioner Tools'):
             else:
                 await ctx.send('Verification failed, please try again')
 
+    async def initiate_league(self, ctx):
+        pass
+
+    async def refresh_league(self, ctx):
+        pass
 
 def setup(bot):
     bot.add_cog(League(bot))

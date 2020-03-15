@@ -1,3 +1,4 @@
+from collections import defaultdict
 import discord
 from discord.ext import commands
 import logging
@@ -17,7 +18,7 @@ EXTENSIONS = [
     'cogs.commish',
     'cogs.players',
     'cogs.annuhlitucks',
-    'cogs.rumors',
+    # 'cogs.rumors',
 ]
 PARAMS = {
     'consumer_key': os.environ.get('CONSUMER_KEY'),
@@ -44,6 +45,14 @@ FLAG_MAP = {
         's', 'silent'
     }
 }
+
+
+def startup(creation):
+    for extension in EXTENSIONS:
+        try:
+            creation.load_extension(extension)
+        except Exception as e:
+            traceback.print_exc()
 
 
 class WojBot(commands.Bot):
@@ -90,7 +99,9 @@ class WojBot(commands.Bot):
     recycling = dict()
     rc = False
 
-    compost = dict()
+    compost = {
+        'drafts': defaultdict(list)
+    }
     cc = False
 
     def __init__(self, path='resources', mode='.csv', creds=None):
@@ -198,10 +209,5 @@ class WojBot(commands.Bot):
 
 if __name__ == '__main__':
     bot = WojBot()
-    for extension in EXTENSIONS:
-        try:
-            bot.load_extension(extension)
-        except Exception as e:
-            traceback.print_exc()
-
+    startup(bot)
     bot.run()
