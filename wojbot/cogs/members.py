@@ -3,6 +3,9 @@ from discord.ext import commands
 
 
 class MembersCog(commands.Cog, name="Member Commands"):
+    """
+    Commands associated with members. These are meant to work on non-league servers.
+    """
     def __init__(self, bot):
         self.bot = bot
 

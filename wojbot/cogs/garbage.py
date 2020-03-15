@@ -2,6 +2,9 @@ from discord.ext import commands
 
 
 class Garbage(commands.Cog, name='Memory Management Commands'):
+    """
+    Garbage Collection Module. Very self explanatory.
+    """
     def __init__(self, bot):
         self.bot = bot
 

@@ -6,11 +6,6 @@ import json
 import traceback
 import pandas as pd
 
-logger = logging.getLogger('discord')
-logger.setLevel(logging.DEBUG)
-handler = logging.FileHandler(filename='discord.log', encoding='utf-8', mode='w')
-handler.setFormatter(logging.Formatter('%(asctime)s:%(levelname)s:%(name)s: %(message)s'))
-logger.addHandler(handler)
 
 DESCRIPTION = """"""
 TOKEN = os.environ['DISCORD_TOKEN']
@@ -43,30 +38,53 @@ FLAG_MAP = {
         'load', 'l'
     },
     'override': {
-        'o'
+        'o', 'override'
     },
     'silent': {
         's', 'silent'
     }
 }
 
+
 class WojBot(commands.Bot):
+    logger = logging.getLogger('discord')
+    handler = logging.FileHandler(filename='discord.log', encoding='utf-8', mode='w')
+    handler.setFormatter(logging.Formatter('%(asctime)s:%(levelname)s:%(name)s: %(message)s'))
+    logger.addHandler(handler)
+
     """
     This is WojBot, hear him roar! He is and forever will be my masterpiece.
     """
 
     creds = None
 
+    """
+    This is for you, as a user, to edit. Depending on what roles you have in your league and what permissions you want 
+    to give them, just put the role names for those users you want to have special bot permissions in here.
+    """
     higherups = [
 
     ]
 
+    """
+    These are additional command flags. All cogs load from this flag map, and then adjust their own from there. I am not
+    sure if the discord.py bot has it's own functionality for this, but this was interesting to build functionality
+    around. I wonder how it actually works.
+    """
     flag_map = FLAG_MAP
 
+    """
+    Can't think of a better name lol
+    """
     data_model = {
 
     }
 
+    """
+    This is the memory management system for the bot. While the data model above should be persistent, these are the
+    tools and files that the bot doesn't need to stay active, but may need for specific tasks. Each of these can be
+    emptied automatically, or by command through the Garbage Collection module.
+    """
     garbage = dict()
 
     recycling = dict()
@@ -78,7 +96,10 @@ class WojBot(commands.Bot):
     def __init__(self, path='resources', mode='.csv', creds=None):
         """
         Loads up WojBot
-        :param path: Directory to load files from.
+        :param path: str. Directory to load files from.
+        :param mode: str. Whether to load from .csv files, or using .sql files
+        :param creds: str, dict. Credentials to be passed to the various tools. Tools have their own ways to look up
+                                 credentials from environment variables. Sending creds through here will override those.
 
         TODO: Convert all loads to use os package best practices
         """
@@ -100,6 +121,12 @@ class WojBot(commands.Bot):
 
     @staticmethod
     def _load_creds(creds):
+        """
+        Creates a credential dictionary based on input
+        :param creds: str, dict. If a str, treats it as a file path (relative to cwd), and loads a json. If that doesn't
+                                 work, treats it as a json blob.
+        :return: dict. Credentials.
+        """
         if isinstance(creds, str):
             try:
                 with open(os.path.join(os.getcwd(), creds), 'rb') as file:
@@ -112,7 +139,7 @@ class WojBot(commands.Bot):
             raise ValueError
         return dcreds
 
-    def _load_pd(self):
+    def _load_csv(self):
         for table in TABLES:
             if table == 'weekly_stats':
                 pass
@@ -132,8 +159,11 @@ class WojBot(commands.Bot):
         self.loaded = True
 
     def _load_data_model(self):
+        """
+        Part of start up. Loads data uesd by tools and bot. Currently both modes are functionally the same.
+        """
         if self.mode == '.csv':
-            self._load_pd()
+            self._load_csv()
         elif self.mode == '.sql':
             self._load_sql()
 
@@ -142,19 +172,25 @@ class WojBot(commands.Bot):
             value.to_csv(os.path.join(self.path, key + self.mode))
 
     def dump_data_model(self):
+        """
+        Writes out data model to either local CSVs or to a SQL database
+        """
         if self.mode == '.csv':
             self._dump_pd()
         elif self.mode == '.sql':
             pass
 
     async def on_ready(self):
+        """
+        Personal imp of on_ready
+        """
         """http://discordpy.readthedocs.io/en/rewrite/api.html#discord.on_ready"""
 
-        logger.info(f'Logged in as: {self.user.name} - {self.user.id}\nVersion: {discord.__version__}')
+        self.logger.info(f'Logged in as: {self.user.name} - {self.user.id}\nVersion: {discord.__version__}')
 
         # Need to come up with something better for this
         # await self.change_presence(activity=discord.Streaming(name='Cogs Example', url='https://twitch.tv/kraken'))
-        logger.info(f'Successfully logged in and booted...!')
+        self.logger.info(f'Successfully logged in and booted...!')
 
     def run(self):
         super().run(TOKEN, reconnect=True, bot=True)
@@ -165,9 +201,7 @@ if __name__ == '__main__':
     for extension in EXTENSIONS:
         try:
             bot.load_extension(extension)
-            logger.info('Extension %s successfully loaded', extension)
         except Exception as e:
-            logger.info('Failed to load extension %s.', extension)
             traceback.print_exc()
 
     bot.run()
