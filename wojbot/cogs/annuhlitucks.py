@@ -110,16 +110,14 @@ class Analytics(commands.Cog, name="Analytics"):
                     self.yes.run(ovr)
                     self.logger.info('Loading DF')
                     df = self.yes.data_model['weekly_elos']
-
-                    if not silent:
-                        await ctx.send("Here are the Elo ratings for week {last_week}:".format(last_week=last_week))
                     ids = df.index
                     last_week = str(last_week)
                     self.logger.info('Confirming week')
                     try:
+                        if not silent:
+                            await ctx.send("Here are the Elo ratings for week {last_week}:".format(last_week=last_week))
                         elos = df['week_' + last_week]
                         players = self.bot.data_model['players']
-                        teams = self.bot.data_model['teams']
                         self.logger.info('Elos have loaded.')
                         if not silent:
                             self.logger.info('Messaging to league.')
@@ -130,11 +128,12 @@ class Analytics(commands.Cog, name="Analytics"):
                         self.yes.dump()
                     except ValueError:
                         await ctx.send("Well that shit didn't work")
+                        self.logger.warn('Incorrect values provided.')
                     except KeyError:
-                        self.logger.info('Past weeks have not been calculated yet')
+                        self.logger.warn('Past weeks have not been calculated yet')
 
                 else:
-                    self.logger.info('They a bitch')
+                    self.logger.warn('They a bitch')
                     await ctx.send('Verification failed, please try again')
 
 

@@ -56,14 +56,11 @@ def startup(creation):
 
 
 class WojBot(commands.Bot):
-    logger = logging.getLogger('discord')
-    handler = logging.FileHandler(filename='discord.log', encoding='utf-8', mode='w')
-    handler.setFormatter(logging.Formatter('%(asctime)s:%(levelname)s:%(name)s: %(message)s'))
-    logger.addHandler(handler)
-
     """
     This is WojBot, hear him roar! He is and forever will be my masterpiece.
     """
+
+    logger = logging.getLogger(__file__)
 
     creds = None
 
