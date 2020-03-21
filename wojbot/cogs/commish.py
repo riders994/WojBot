@@ -25,7 +25,6 @@ class League(commands.Cog, name='Commissioner Tools'):
         Loads a league, and the information involved in a league necessary for running bot operations.
         :param ctx: discord.ctx. Discord context which gives info.
         :param league: bool. Whether or not there is a specific league to be loaded.
-        :return:
         """
         if league:
             self.logger.info('Detecting league. Fetching tables.')
@@ -64,7 +63,7 @@ class League(commands.Cog, name='Commissioner Tools'):
         s = self.bot.recycling.get('scraper')
         if s:
             if not s.sc.token_is_valid():
-                ctx.send('Token expired. Manual intervention required.')
+                await ctx.send('Token expired. Manual intervention required.')
             s.sc.refresh_access_token()
             await ctx.send('Token successfully refreshed')
         else:

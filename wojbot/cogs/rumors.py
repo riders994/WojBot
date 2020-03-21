@@ -21,6 +21,11 @@ STAGE_MAP = [
     'league', 'choice', 'form', 'source', 'release'
 ]
 
+SOURCE_MESSAGE = """
+                 ({Index}): {source_name}, a level {source_level} source (1-5 scale). 
+                 If this is a 1, other teams will know this is from the team that it is about, or a verified internal source: {internal}.
+                 """
+
 
 class Rumors(commands.Cog, name='Rumor Commands'):
 
@@ -30,11 +35,19 @@ class Rumors(commands.Cog, name='Rumor Commands'):
     current = dict()
     stages = STAGE_MAP
     league_choices = dict()
+    viz = defaultdict(lambda: 1)
     timeout = defaultdict(lambda: 5)
 
     def __init__(self, bot):
         self.bot = bot
         self.logger = bot.logger
+        self.sources = bot.data_model['source_types']
+        self.rumor_forms = bot.data_model['rumor_forms']
+        self.rumors = bot.data_model['rumors']
+        self.releases = bot.data_model['release_types']
+
+    async def rumor_guide(self, ctx):
+        pass
 
     def _set_timeout(self, ctx, t=5.0):
         self.timeout.update({ctx.author.id: t})
@@ -92,7 +105,7 @@ class Rumors(commands.Cog, name='Rumor Commands'):
         # return draft
 
     async def _league_prompt(self, player, message):
-        draft = self.drafts[player]
+        draft = self.current[player]
         rcv = message.content
         try:
             rcv = int(rcv)
@@ -105,7 +118,7 @@ class Rumors(commands.Cog, name='Rumor Commands'):
         await self._ingest_response(self.timeout[player])
 
     async def _choice_prompt(self, player, message):
-        draft = self.drafts[player]
+        draft = self.current[player]
         rcv = message.content
         try:
             rcv = int(rcv)
@@ -115,15 +128,27 @@ class Rumors(commands.Cog, name='Rumor Commands'):
         self.progress[player] += rcv
         rcv -= 1
         if rcv:
-            pass
+            viz = self.viz.get('')
+            await message.author.send('')
+            await message.author.send('')
+            await self._give_sources(message.author)
         else:
             pass
 
     async def _form_prompt(self):
         pass
 
-    async def _source_prompt(self):
-        pass
+    async def _give_sources(self, recipient, waits=0):
+        draft = self.current[recipient.id]
+        did_form = draft.get('form')
+        if did_form is None:
+            for row in self.sources.itertuples():
+                drow = row._asdict()
+                await recipient.send(SOURCE_MESSAGE.format(drow))
+            await self._ingest_response(self.timeout[recipient.id], 4)
+
+    async def _source_prompt(self, player, message):
+        rcv = message.content
 
     async def _release_prompt(self):
         pass
@@ -195,13 +220,16 @@ class Rumors(commands.Cog, name='Rumor Commands'):
     def discard_draft(self):
         pass
 
-    async def _ingest_response(self, to=5):
+    async def _ingest_response(self, to=5, stageor=None):
         msg = await self.bot.wait_for('message', timeout=to)
         discid = msg.author.id
         if discid not in self.drafts.keys():
             await self._ingest_response()
         else:
-            stage = self._check_stage(discid)
+            if stageor:
+                stage = stageor
+            else:
+                stage = self._check_stage(discid)
             await self._do_stage(stage, discid, msg)
 
 

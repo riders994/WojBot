@@ -51,7 +51,7 @@ def startup(creation):
     for extension in EXTENSIONS:
         try:
             creation.load_extension(extension)
-        except Exception as e:
+        except:
             traceback.print_exc()
 
 
@@ -97,7 +97,7 @@ class WojBot(commands.Bot):
     rc = False
 
     compost = {
-        'drafts': defaultdict(list)
+        'drafts': defaultdict(dict)
     }
     cc = False
 
