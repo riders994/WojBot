@@ -12,6 +12,7 @@ TOKEN = os.environ['DISCORD_TOKEN']
 FLAG = '$'
 EXTENSIONS = [
     'cogs.messaging',
+    'cogs.dice',
     'cogs.verify',
     'cogs.members',
     'cogs.commish',

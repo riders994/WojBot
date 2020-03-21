@@ -1,4 +1,6 @@
 from collections import defaultdict
+import numpy as np
+from numpy import AxisError
 
 """
 Common functions that could be used amongst different Cogs
@@ -43,3 +45,70 @@ def get_flag(flag, flag_map, flag_dict):
         res = flag_dict.get(check)
         if res:
             return res[0]
+
+
+def parse_dice(command):
+    pieces = command.split(' ')
+    roll = pieces[0]
+    rpieces = roll.split('d')
+    res_messages = list()
+    try:
+        res = np.random.randint(1, int(rpieces[1]) + 1, int(rpieces[0]))
+    except ValueError:
+        res = np.random.randint(1, 21)
+    if len(pieces) - 1:
+        mods = set(pieces[1:])
+        if 'adv' in mods:
+            adv = np.random.randint(1, int(rpieces[1]) + 1, int(rpieces[0]))
+            m = """\nwith advantage"""
+            finalres = res.sum()
+            res = np.amax(np.array([res, adv]), axis=0)
+            if '+' in mods:
+                finalres += int(pieces[pieces.index('+') + 1])
+            for i in range(adv.shape[0]):
+                m += ' {}'
+            m += '\n' + ' ' * (12 + len(str(finalres)))
+            for i in range(adv.shape[0]):
+                m += ' {}'
+            if not adv.shape[0] - 1:
+                res = np.array((res,))
+            try:
+                new = m.format(np.concatenate((res, adv), axis=1))
+            except AxisError:
+                t = np.concatenate((res, adv))
+                new = m.format(*list(t))
+            res_messages.append(new)
+        if 'dis' in mods:
+            dis = np.random.randint(1, int(rpieces[1]) + 1, int(rpieces[0]))
+            m = """\nwith disadvantage"""
+            finalres = res.sum()
+            res = np.amin(np.array([res, dis]), axis=0)
+            for i in range(dis.shape[0]):
+                m += ' {}'
+            m += '\n' + ' ' * (14 + len(str(finalres)))
+            for i in range(dis.shape[0]):
+                m += ' {}'
+            if not dis.shape[0] - 1:
+                res = np.array((res,))
+            try:
+                new = m.format(np.concatenate((res, dis), axis=1))
+            except AxisError:
+                t = np.concatenate((res, dis))
+                new = m.format(*list(t))
+            res_messages.append(new)
+        finalres = res.sum()
+        if '+' in mods:
+            finalres += int(pieces[pieces.index('+') + 1])
+            res_messages.append('\nand a modifier of {}'.format(int(pieces[pieces.index('+') + 1])))
+    else:
+        finalres = res.sum()
+    dice = ', '.join([str(i) for i in list(res)])
+    message = """You rolled a {}!
+
+These were your dice: {}""".format(finalres, dice)
+    modmessage = ""
+    for v in res_messages:
+        modmessage += v
+    if len(modmessage):
+        message += modmessage
+    return message + '.'
