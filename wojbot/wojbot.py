@@ -5,6 +5,7 @@ import os
 import json
 import traceback
 import pandas as pd
+from collections import defaultdict
 
 
 DESCRIPTION = """"""
@@ -93,6 +94,8 @@ class WojBot(commands.Bot):
 
     compost = dict()
     cc = False
+
+    dadjoke_toggle = defaultdict(bool)
 
     def __init__(self, path='resources', mode='.csv', creds=None):
         """

@@ -1,6 +1,8 @@
 from discord.ext import commands
 import random
 
+DAD_TOGGLES = {'dad', 'dadjoke', 'dad joke', 'im'}
+
 
 class Messaging(commands.Cog, name='Messaging Commands'):
     """
@@ -11,6 +13,13 @@ class Messaging(commands.Cog, name='Messaging Commands'):
         self._last_member = None
         self.load = bot.path
 
+    @commands.command()
+    async def toggle(self, ctx, *, toggle: str):
+        if toggle in DAD_TOGGLES:
+            old = self.bot.dadjoke_toggle[ctx.channel.id]
+            self.bot.dadjoke_toggle[ctx.channel.id] = not old
+            await ctx.send('Dad jokes toggled to {} for this channel.'.format(old))
+
     @commands.Cog.listener()
     async def on_message(self, message):
         """
@@ -18,26 +27,29 @@ class Messaging(commands.Cog, name='Messaging Commands'):
         :param message: Scans the message for dad-jokable material
         :return: Sends a message
         """
-        if message.author.id == self.bot.user.id:
-            return
-        rcv = message.content
-        dad = rcv.find('I am') + 1
-        if not dad:
-            dad = rcv.find('i am') + 1
-        if dad:
-            dad += 1
-        if not dad:
-            dad = rcv.find("I'm") + 1
-        if not dad:
-            dad = rcv.find("i'm") + 1
-        if not dad:
-            dad = rcv.find('I’m') + 1
-        if not dad:
-            dad = rcv.find('i’m') + 1
-        if dad:
-            dad += 3
-            msg = "Hi {}, I'm dad".format(message.content[dad:].capitalize())
-            await message.channel.send(msg)
+        if self.bot.dadjoke_toggle.get(message.channel.id):
+            pass
+        else:
+            if message.author.id == self.bot.user.id:
+                return
+            rcv = message.content
+            dad = rcv.find('I am') + 1
+            if not dad:
+                dad = rcv.find('i am') + 1
+            if dad:
+                dad += 1
+            if not dad:
+                dad = rcv.find("I'm") + 1
+            if not dad:
+                dad = rcv.find("i'm") + 1
+            if not dad:
+                dad = rcv.find('I’m') + 1
+            if not dad:
+                dad = rcv.find('i’m') + 1
+            if dad:
+                dad += 3
+                msg = "Hi {}, I'm dad".format(message.content[dad:].capitalize())
+                await message.channel.send(msg)
 
     @commands.command()
     async def echo(self, ctx, *args):
