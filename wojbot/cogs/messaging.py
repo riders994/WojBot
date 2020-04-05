@@ -15,6 +15,9 @@ class Messaging(commands.Cog, name='Messaging Commands'):
 
     @commands.command()
     async def toggle(self, ctx, *, toggle: str):
+        """
+        Toggles certain message types. For Dad Jokes off, use 'dad' or 'dad joke'
+        """
         if toggle in DAD_TOGGLES:
             old = self.bot.dadjoke_toggle[ctx.channel.id]
             self.bot.dadjoke_toggle[ctx.channel.id] = not old
