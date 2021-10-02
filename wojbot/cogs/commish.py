@@ -20,6 +20,19 @@ class League(commands.Cog, name='Commissioner Tools'):
         self.verifier = self.bot.get_cog('Verify')
         self.map = bot.flag_map
 
+    def new_lottery(self):
+        pass
+
+    def lott_player_add(self):
+        pass
+
+    def lott_update(self):
+        pass
+
+    def check_lottery(self):
+        pass
+
+
     def load_league(self, ctx, league=False):
         """
         Loads a league, and the information involved in a league necessary for running bot operations.

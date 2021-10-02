@@ -86,7 +86,7 @@ class Messaging(commands.Cog, name='Messaging Commands'):
         Adds some fuckin numbers together you idiot.
         """
         s = 0
-        addends = addends.replace(',', '').split(' ')
+        addends = addends.replace(' ', '').split(',')
         for a in addends:
             try:
                 try:
