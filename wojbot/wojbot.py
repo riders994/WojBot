@@ -1,12 +1,19 @@
+import os
+import glob
+import yaml
+import json
+import asyncio
+import logging
+import logging.handlers
+
+from typing import (
+    List,
+    Optional,
+)
+
 import discord
 from discord.ext import commands
-import logging
-import os
-import json
-import traceback
-import pandas as pd
-from collections import defaultdict
-
+from aiohttp import ClientSession
 
 DESCRIPTION = """"""
 TOKEN = os.environ['DISCORD_TOKEN']
@@ -59,6 +66,9 @@ class WojBot(commands.Bot):
     """
 
     creds = None
+    mode = '.csv'
+    channel_configs = dict()
+    league_configs = dict()
 
     """
     This is for you, as a user, to edit. Depending on what roles you have in your league and what permissions you want 
@@ -95,9 +105,11 @@ class WojBot(commands.Bot):
     compost = dict()
     cc = False
 
-    dadjoke_toggle = defaultdict(bool)
-
-    def __init__(self, path='resources', mode='.csv', creds=None):
+    def __init__(
+            self,
+            path='resources',
+            creds=None
+    ):
         """
         Loads up WojBot
         :param path: str. Directory to load files from.
@@ -108,8 +120,8 @@ class WojBot(commands.Bot):
         TODO: Convert all loads to use os package best practices
         """
         super().__init__(command_prefix=FLAG, description=DESCRIPTION)
-        self.path = path
-        self.mode = mode
+        self.path = os.path.join(os.getcwd(), path)
+        self._load_configs()
         self._load_data_model()
         if creds:
             try:
@@ -119,9 +131,26 @@ class WojBot(commands.Bot):
         else:
             self.params = PARAMS
 
-        # how the fuck do CLAs work?
-        # if load:
-        #     self.load = self.options['load']
+    def _load_configs(self):
+        """
+        Loads configs into memory
+        :return:
+        TODO: Add DB Secrets to script
+        """
+        config_loc = os.path.join(self.path, 'configs')
+        with open(os.path.join(config_loc, 'bot_config.yaml'), 'r') as f:
+            self.config = yaml.safe_load(f)
+        league_loc = os.path.join(config_loc, 'league_configs')
+        for file in glob.iglob(league_loc):
+            league_name = file.replace('.yaml', '').split('/')[-1]
+            with open(file, 'r') as f:
+                self.league_configs[league_name] = yaml.safe_load(f)
+        channel_loc = os.path.join(config_loc, 'channel_configs')
+        for file in glob.iglob(channel_loc):
+            channel_id = file.replace('.yaml', '').split('/')[-1]
+            with open(file, 'r') as f:
+                self.channel_configs[channel_id] = yaml.safe_load(f)
+
 
     @staticmethod
     def _load_creds(creds):
@@ -199,6 +228,8 @@ class WojBot(commands.Bot):
     def run(self):
         super().run(TOKEN, reconnect=True, bot=True)
 
+class Wojbot2(commands.Bot):
+    pass
 
 if __name__ == '__main__':
     bot = WojBot()
