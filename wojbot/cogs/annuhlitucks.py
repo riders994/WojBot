@@ -1,6 +1,6 @@
 import pandas as pd
 from discord.ext import commands
-from .commonfuncs import create_flag_dict, get_flag
+from wojbot.cogs.commonfuncs import create_flag_dict, get_flag
 from yahooelosystem import YahooEloSystem
 
 FLAG_OVERRIDES = {
