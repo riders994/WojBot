@@ -13,6 +13,10 @@ dependencies = [
     "PyYAML>=6.0",
 ]
 
+[project.optional-dependencies]
+# Remote Postgres data source (wired up with the commish/elo cogs).
+postgres = ["asyncpg>=0.29"]
+
 [project.scripts]
 wojbot = "wojbot.__main__:main"
 

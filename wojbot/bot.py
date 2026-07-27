@@ -8,7 +8,9 @@ import discord
 from discord.ext import commands
 
 from .cogs import discover_extensions
-from .core.config import Settings
+from .core.config import PROJECT_ROOT, Settings
+from .core.config_store import ConfigStore
+from .core.data import LeagueCache, LocalSource, Runtime
 
 log = logging.getLogger(__name__)
 
@@ -18,6 +20,17 @@ class WojBotV2(commands.Bot):
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+
+        # Storage layers (see wojbot/core):
+        #  - configs: persistent bot/guild/league settings (flat YAML, cached).
+        #  - leagues: in-memory cache of authoritative league data. Uses the local
+        #    source for now; swap in PostgresSource(settings.database_url) once the
+        #    SQL source is implemented with the commish/elo cogs.
+        #  - runtime: registry for live, non-persisted objects (scraper, elo engine).
+        self.configs = ConfigStore.load()
+        self.leagues = LeagueCache(LocalSource(PROJECT_ROOT / "resources"))
+        self.runtime = Runtime()
+
         # Default intents are enough for slash commands. Future cogs that need
         # privileged intents (e.g. a dad-joke listener needs message_content)
         # should enable them here and in the Discord developer portal.

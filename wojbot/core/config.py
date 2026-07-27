@@ -12,23 +12,27 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-import yaml
 from dotenv import load_dotenv
 
 from .errors import ConfigError
 
 # Project root: .../WojBot (two parents up from this file: core/ -> wojbot/ -> root).
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-DEFAULT_CONFIG_PATH = PROJECT_ROOT / "resources" / "configs" / "bot_config.yaml"
 
 
 @dataclass(frozen=True)
 class Settings:
-    """Validated runtime settings for the bot."""
+    """Validated runtime settings for the bot (secrets & environment).
+
+    Distinct from the user-facing bot/guild/league config in
+    :class:`wojbot.core.config_store.ConfigStore` — this holds the token,
+    connection strings, and other deploy-time environment values.
+    """
 
     token: str
     guild_id: int | None
     log_level: str
+    database_url: str | None  # remote Postgres DSN; used once the SQL data source lands
 
     @classmethod
     def load(cls) -> "Settings":
@@ -56,18 +60,11 @@ class Settings:
             ) from exc
 
         log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+        database_url = os.environ.get("DATABASE_URL") or None
 
-        return cls(token=token, guild_id=guild_id, log_level=log_level)
-
-
-def load_yaml_config(path: Path = DEFAULT_CONFIG_PATH) -> dict:
-    """Return the YAML config as a dict, or ``{}`` if missing/empty.
-
-    v1 let this become ``None`` on an empty file; callers here always get a dict.
-    """
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-    except FileNotFoundError:
-        return {}
-    return data or {}
+        return cls(
+            token=token,
+            guild_id=guild_id,
+            log_level=log_level,
+            database_url=database_url,
+        )
