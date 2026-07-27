@@ -1,4 +1,0 @@
-# Copy to sql_config.yml (gitignored) and fill in.
-# A single Postgres warehouse holds all leagues; queries filter by league_id.
-# conn_uri is a libpq/psycopg2 connection string (URI or key=value DSN).
-conn_uri: postgresql://user:password@host:5432/wojbot

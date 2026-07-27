@@ -34,8 +34,12 @@ class Sql(commands.Cog):
         # Build the service (loads the query registry — no DB needed) and try to
         # connect. A failed connect is logged, not raised, so the cog still loads.
         self.bot.sql = await asyncio.to_thread(SqlService.create)
+        conn_uri = self.bot.settings.sql_conn_uri
+        if not conn_uri:
+            log.warning("SQL_CONN_URI is not set; database features are disabled until configured.")
+            return
         try:
-            await self.bot.sql.connect()
+            await self.bot.sql.connect(conn_uri)
             log.info("SQL connected: %s", await self.bot.sql.status())
         except Exception:
             log.exception("SQL connect failed at startup; use /sql reconnect once the DB is up")
@@ -75,11 +79,15 @@ class Sql(commands.Cog):
         if not await self._require_owner(interaction):
             return
         await interaction.response.defer(ephemeral=True)
+        conn_uri = self.bot.settings.sql_conn_uri
+        if not conn_uri:
+            await interaction.followup.send("SQL_CONN_URI is not set — configure it in .env first.")
+            return
         service = getattr(self.bot, "sql", None)
         if service is None:
             self.bot.sql = service = await asyncio.to_thread(SqlService.create)
         try:
-            await service.connect()
+            await service.connect(conn_uri)
         except Exception as exc:  # noqa: BLE001 - surface the reason to the user
             await interaction.followup.send(f"Reconnect failed: {exc}")
             return

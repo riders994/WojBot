@@ -7,8 +7,8 @@ this wrapper adapts its *synchronous* psycopg2 API for discord.py's event loop b
 running every blocking call in a thread and serializing access behind a lock
 (psycopg2 connections are not safe for concurrent use).
 
-Connection details come from ``sql_config.yml`` at the repo root (``conn_uri``),
-which is gitignored.
+The connection URI comes from the ``SQL_CONN_URI`` environment variable (see
+:class:`wojbot.core.config.Settings`).
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ import asyncio
 import logging
 from pathlib import Path
 
-import yaml
 from rv_pytools.sqltools import Manager
 
 from .config import PROJECT_ROOT
@@ -25,25 +24,8 @@ from .errors import ConfigError
 
 log = logging.getLogger(__name__)
 
-SQL_CONFIG_PATH = PROJECT_ROOT / "sql_config.yml"
 SQL_DIR = PROJECT_ROOT / "sql"
 DEFAULT_CONNECTION = "wojbot"
-
-
-def load_conn_uri(path: Path = SQL_CONFIG_PATH) -> str:
-    """Read the ``conn_uri`` from the SQL config file."""
-    try:
-        with open(path, encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
-    except FileNotFoundError as exc:
-        raise ConfigError(
-            f"{path.name} not found. Copy sql_config.example.yml to {path.name} "
-            "and set conn_uri."
-        ) from exc
-    conn_uri = cfg.get("conn_uri")
-    if not conn_uri:
-        raise ConfigError(f"'conn_uri' is missing or empty in {path.name}.")
-    return conn_uri
 
 
 class SqlService:
@@ -66,9 +48,10 @@ class SqlService:
         manager.run_new_files(subdir="queries")  # register any new sql/queries/*.sql
         return cls(manager, name)
 
-    async def connect(self, config_path: Path = SQL_CONFIG_PATH) -> None:
-        """Open (or replace) the default connection from ``sql_config.yml``."""
-        conn_uri = load_conn_uri(config_path)
+    async def connect(self, conn_uri: str) -> None:
+        """Open (or replace) the default connection using ``conn_uri``."""
+        if not conn_uri:
+            raise ConfigError("No SQL connection URI provided (set SQL_CONN_URI).")
         async with self._lock:
             await asyncio.to_thread(
                 self._manager.connect, self._default, {"dsn": conn_uri}
