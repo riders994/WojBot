@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wojbot"
+version = "2.0.0"
+description = "WojBot v2 — a Discord bot for a fantasy basketball league"
+requires-python = ">=3.11"
+dependencies = [
+    "discord.py==2.7.1",
+    "python-dotenv>=1.0",
+    "PyYAML>=6.0",
+]
+
+[project.scripts]
+wojbot = "wojbot.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["wojbot*"]

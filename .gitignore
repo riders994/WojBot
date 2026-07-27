@@ -1,6 +1,16 @@
+# Secrets / environment
+.env
 creds/set_creds.sh
-wojbot/tools/cogs/__pycache__
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# Logs & data
+*.log
 *.csv
-discord.log
+
+# Editors
 .idea/
-.idea/*
