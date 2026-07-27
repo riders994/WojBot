@@ -36,26 +36,21 @@ class DataSource(ABC):
 
 
 class PostgresSource(DataSource):
-    """Remote Postgres source (via ``asyncpg``) — not implemented yet.
+    """Postgres-backed source — not implemented yet.
 
-    Arrives with the commish/elo cogs. Named SQL queries will live under
-    ``wojbot/core/data/queries/*.sql`` and connect using
-    :attr:`wojbot.core.config.Settings.database_url`. Install with the ``postgres``
-    extra (``pip install -e '.[postgres]'``).
+    Arrives with the commish/elo cogs, wrapping the shared ``bot.sql``
+    (:class:`wojbot.core.sql.SqlService`, rv_pytools/psycopg2) and its named-query
+    registry rather than opening its own connection.
     """
 
-    def __init__(self, dsn: str) -> None:
-        self._dsn = dsn
-        self._pool = None
-
-    async def connect(self) -> None:
-        raise NotImplementedError(
-            "PostgresSource is pending: add asyncpg, a connection pool, and the "
-            "named queries when the commish/elo cogs are ported."
-        )
+    def __init__(self, sql_service) -> None:
+        self._sql = sql_service
 
     async def fetch_league_for_guild(self, guild_id: int) -> LeagueData | None:
-        raise NotImplementedError("PostgresSource is pending.")
+        raise NotImplementedError(
+            "PostgresSource is pending: implement via bot.sql.execute(<query>, "
+            "guild_id=...) when the commish/elo cogs are ported."
+        )
 
 
 class LocalSource(DataSource):

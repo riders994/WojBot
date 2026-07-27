@@ -32,7 +32,6 @@ class Settings:
     token: str
     guild_id: int | None
     log_level: str
-    database_url: str | None  # remote Postgres DSN; used once the SQL data source lands
 
     @classmethod
     def load(cls) -> "Settings":
@@ -60,11 +59,5 @@ class Settings:
             ) from exc
 
         log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
-        database_url = os.environ.get("DATABASE_URL") or None
 
-        return cls(
-            token=token,
-            guild_id=guild_id,
-            log_level=log_level,
-            database_url=database_url,
-        )
+        return cls(token=token, guild_id=guild_id, log_level=log_level)

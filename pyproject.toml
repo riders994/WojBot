@@ -11,11 +11,8 @@ dependencies = [
     "discord.py==2.7.1",
     "python-dotenv>=1.0",
     "PyYAML>=6.0",
+    "rv_pytools>=1.2.1",  # SQL connection manager + named-query registry (psycopg2)
 ]
-
-[project.optional-dependencies]
-# Remote Postgres data source (wired up with the commish/elo cogs).
-postgres = ["asyncpg>=0.29"]
 
 [project.scripts]
 wojbot = "wojbot.__main__:main"

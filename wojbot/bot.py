@@ -24,9 +24,10 @@ class WojBotV2(commands.Bot):
         # Storage layers (see wojbot/core):
         #  - configs: persistent bot/guild/league settings (flat YAML, cached).
         #  - leagues: in-memory cache of authoritative league data. Uses the local
-        #    source for now; swap in PostgresSource(settings.database_url) once the
-        #    SQL source is implemented with the commish/elo cogs.
+        #    source for now; the SQL-backed source (via bot.sql / rv_pytools) is
+        #    wired in with the commish/elo cogs.
         #  - runtime: registry for live, non-persisted objects (scraper, elo engine).
+        # The database connection itself is provided by the sql cog as bot.sql.
         self.configs = ConfigStore.load()
         self.leagues = LeagueCache(LocalSource(PROJECT_ROOT / "resources"))
         self.runtime = Runtime()

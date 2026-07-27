@@ -1,6 +1,11 @@
 # Secrets / environment
 .env
 creds/set_creds.sh
+sql_config.yml
+
+# Generated SQL manager artifacts (keep the .sql source files, ignore the state)
+sql/manager.log.json
+sql/queries/_queries.json
 
 # Python
 __pycache__/
