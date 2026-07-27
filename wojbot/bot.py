@@ -31,10 +31,12 @@ class WojBotV2(commands.Bot):
         self.leagues = LeagueCache(LocalSource(PROJECT_ROOT / "resources"))
         self.runtime = Runtime()
 
-        # Default intents are enough for slash commands. Future cogs that need
-        # privileged intents (e.g. a dad-joke listener needs message_content)
-        # should enable them here and in the Discord developer portal.
+        # Slash commands only need the default intents; message_content is the
+        # privileged intent the messaging cog's dad-joke listener needs to read
+        # message text. It must also be enabled in the Discord developer portal
+        # (Bot > Privileged Gateway Intents > Message Content Intent).
         intents = discord.Intents.default()
+        intents.message_content = True
         super().__init__(
             command_prefix=commands.when_mentioned,  # unused (slash-only), harmless
             intents=intents,
