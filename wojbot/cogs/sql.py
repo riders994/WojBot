@@ -5,6 +5,10 @@ On load it attaches a :class:`~wojbot.core.sql.SqlService` to the bot as
 and opens the connection. Connection failure at startup is non-fatal: the service
 and its ``/sql`` commands stay available so the DB can be brought up and
 ``/sql reconnect`` used, without restarting the bot.
+
+The commands are owner-only through :func:`~wojbot.core.checks.is_bot_owner`, the
+same decorator the other tiers use — a failed check reaches the tree's error
+handler rather than each command answering for itself.
 """
 
 from __future__ import annotations
@@ -16,6 +20,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from ..core.checks import is_bot_owner
 from ..core.sql import SqlService
 
 log = logging.getLogger(__name__)
@@ -50,16 +55,9 @@ class Sql(commands.Cog):
             await asyncio.to_thread(service.close)
             self.bot.sql = None
 
-    async def _require_owner(self, interaction: discord.Interaction) -> bool:
-        if await self.bot.is_owner(interaction.user):
-            return True
-        await interaction.response.send_message("This command is owner-only.", ephemeral=True)
-        return False
-
     @group.command(name="status", description="Show database connection status.")
+    @is_bot_owner()
     async def status(self, interaction: discord.Interaction) -> None:
-        if not await self._require_owner(interaction):
-            return
         service = getattr(self.bot, "sql", None)
         if service is None:
             await interaction.response.send_message("SQL service is not loaded.", ephemeral=True)
@@ -75,9 +73,8 @@ class Sql(commands.Cog):
         )
 
     @group.command(name="reconnect", description="Reconnect to the database.")
+    @is_bot_owner()
     async def reconnect(self, interaction: discord.Interaction) -> None:
-        if not await self._require_owner(interaction):
-            return
         await interaction.response.defer(ephemeral=True)
         conn_uri = self.bot.settings.sql_conn_uri
         if not conn_uri:
