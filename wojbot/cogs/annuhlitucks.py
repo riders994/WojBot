@@ -145,11 +145,16 @@ class Annuhlitucks(commands.Cog):
 
         def _work():
             league = system.elo_league
+            # Loading reads the config — no scrape — and is what puts the
+            # seasons (and so the team names) on the league.
+            if not league.loaded:
+                league.load()
             if league.frame_manager is None:
                 system.load_frames(None)
             fm = league.frame_manager
+            names = _member_names(league)
             if dynasty:
-                return "dynasty", _latest_series(fm.dynasty_elo)
+                return "dynasty", _latest_series(fm.dynasty_elo), names
             seasons = fm.seasonal_elo
             year = season
             if year is None:
@@ -160,10 +165,10 @@ class Annuhlitucks(commands.Cog):
                     f"No ratings for season {season}. Available: "
                     + (", ".join(str(y) for y in sorted(seasons)) or "none")
                 )
-            return str(year), _latest_series(seasons[year])
+            return str(year), _latest_series(seasons[year]), names
 
         try:
-            label, series = await asyncio.to_thread(_work)
+            label, series, names = await asyncio.to_thread(_work)
         except Exception as exc:  # noqa: BLE001 - surface the reason to the user
             await interaction.followup.send(f"Couldn't build standings: `{exc}`")
             return
@@ -173,7 +178,7 @@ class Annuhlitucks(commands.Cog):
 
         name = (system.ratings_config or {}).get("league_name", system.league)
         lines = [
-            f"{MEDALS.get(rank, f'`{rank:>2}`')} **{member}** — {rating:.0f}"
+            f"{MEDALS.get(rank, f'`{rank:>2}`')} **{names.get(member, member)}** — {rating:.0f}"
             for rank, (member, rating) in enumerate(series.items(), start=1)
         ]
         embed = discord.Embed(
@@ -185,7 +190,7 @@ class Annuhlitucks(commands.Cog):
 
     @group.command(name="team", description="Show one member's current Elo.")
     @app_commands.describe(
-        member="Team/manager name as it appears in the ratings",
+        member="Team name (or the platform account id)",
         season="Season year (defaults to the current one)",
         dynasty="Look up the dynasty rating instead of one season",
     )
@@ -203,9 +208,14 @@ class Annuhlitucks(commands.Cog):
 
         def _work():
             league = system.elo_league
+            # Loading reads the config — no scrape — and is what puts the
+            # seasons (and so the team names) on the league.
+            if not league.loaded:
+                league.load()
             if league.frame_manager is None:
                 system.load_frames(None)
             fm = league.frame_manager
+            names = _member_names(league)
             if dynasty:
                 frame, label = fm.dynasty_elo, "dynasty"
             else:
@@ -223,17 +233,24 @@ class Annuhlitucks(commands.Cog):
             series = _latest_series(frame)
             if series is None:
                 return label, None
-            # Match the member name case-insensitively: exact first, else a
-            # unique substring.
+            # Match on the team name case-insensitively: exact first, else a
+            # unique substring. The frame is indexed by platform account id —
+            # a readable owner name on Fantrax, a bare number on Sleeper — so
+            # the search runs over the names, with the id kept as a fallback
+            # for a member no season has a name for.
+            labels = {i: str(names.get(i, i)) for i in series.index}
             query = member.strip().lower()
-            labels = [str(i) for i in series.index]
-            match = next((series.index[i] for i, n in enumerate(labels) if n.lower() == query), None)
+            match = next((i for i, n in labels.items() if n.lower() == query), None)
             if match is None:
-                hits = [series.index[i] for i, n in enumerate(labels) if query in n.lower()]
+                match = next((i for i in labels if str(i).lower() == query), None)
+            if match is None:
+                hits = [i for i, n in labels.items() if query in n.lower()]
                 if len(hits) == 1:
                     match = hits[0]
                 elif len(hits) > 1:
-                    raise ValueError("Matches several members: " + ", ".join(str(h) for h in hits))
+                    raise ValueError(
+                        "Matches several members: " + ", ".join(labels[h] for h in hits)
+                    )
             if match is None:
                 raise ValueError(f"No member matching '{member}'.")
             rating = float(series.loc[match])
@@ -241,7 +258,7 @@ class Annuhlitucks(commands.Cog):
             # Change since the previous recorded week.
             row = frame.loc[match].dropna()
             delta = float(row.iloc[-1] - row.iloc[-2]) if len(row) >= 2 else 0.0
-            return label, (str(match), rating, rank, len(series), delta)
+            return label, (labels[match], rating, rank, len(series), delta)
 
         try:
             label, result = await asyncio.to_thread(_work)
