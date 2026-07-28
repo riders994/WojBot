@@ -21,10 +21,13 @@ the mutating ``/commish load|sync|publish|dump`` are commissioner-only.
 
 The ``/commish db`` subgroup edits the SQL dimension tables directly (list
 leagues/managers, link this server to a league, rename a league, attach a
-Discord user to a manager). Those touch only the non-anonymized, "Discord-owned"
-columns — ``dim_league.discord_server_id`` / ``league_name`` and
-``dim_manager.discord_id`` — the same fields ``sync`` seeds but never overwrites.
-They run as parameterized UPDATEs against the loaded system's connection.
+Discord user to a manager, add a new manager). The link/rename/linkuser edits
+touch only the non-anonymized, "Discord-owned" columns —
+``dim_league.discord_server_id`` / ``league_name`` and ``dim_manager.discord_id``
+— the same fields ``sync`` seeds but never overwrites, so they run as
+parameterized UPDATEs against the loaded system's connection. Adding a manager
+writes ``player_name``, which *is* anonymized, so it goes through EloSQL's own
+append/push (which tokenizes and updates the reversal map) rather than raw SQL.
 """
 
 from __future__ import annotations
@@ -414,6 +417,56 @@ class Commish(commands.Cog):
             return
         await interaction.followup.send(
             f"Attached {user.mention} (`{user.id}`) to manager `{manager_id}`.",
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    @db.command(name="adduser", description="Create a new manager in the database.")
+    @app_commands.describe(
+        name="The manager's name",
+        user="Discord user to attach to the new manager (optional)",
+    )
+    @is_commissioner()
+    async def db_adduser(
+        self,
+        interaction: discord.Interaction,
+        name: str,
+        user: discord.User | None = None,
+    ) -> None:
+        await interaction.response.defer(ephemeral=True)
+        name = name.strip()
+        if not name:
+            await interaction.followup.send("A manager name is required.")
+            return
+        elo_sql = await self._db_backend(interaction)
+        if elo_sql is None:
+            return
+        discord_id = user.id if user is not None else None
+
+        def _work():
+            # player_name is anonymized, so this goes through EloSQL's own
+            # append/push (which tokenizes the name and rewrites the reversal
+            # map) rather than a raw INSERT. Pull first so the minted id is off
+            # the current table and existing tokens stay put.
+            elo_sql.pull_dims("manager", overwrite=True)
+            manager_id = elo_sql._next_dim_id("manager")
+            elo_sql._append_dim(
+                "manager",
+                [{"manager_id": manager_id, "player_name": name, "discord_id": discord_id}],
+            )
+            elo_sql._push_dim("manager")
+            return manager_id
+
+        try:
+            manager_id = await asyncio.to_thread(_work)
+        except Exception as exc:  # noqa: BLE001 - surface the reason to the commish
+            log.exception("db adduser failed")
+            await interaction.followup.send(f"Couldn't add manager: `{exc}`")
+            return
+        suffix = ""
+        if user is not None:
+            suffix = f" and attached {user.mention} (`{user.id}`)"
+        await interaction.followup.send(
+            f"Added manager **{name}** as `manager_id` {manager_id}{suffix}.",
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
