@@ -11,6 +11,7 @@ from .cogs import discover_extensions
 from .core.config import PROJECT_ROOT, Settings
 from .core.config_store import ConfigStore
 from .core.data import LeagueCache, LocalSource, Runtime
+from .core.discord_anon import DiscordAnon
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +32,9 @@ class WojBotV2(commands.Bot):
         self.configs = ConfigStore.load()
         self.leagues = LeagueCache(LocalSource(PROJECT_ROOT / "resources"))
         self.runtime = Runtime()
+        # Bot-local surrogate map so real Discord IDs stay out of the shared DB
+        # (see wojbot.core.discord_anon); used by the commish db commands.
+        self.discord_anon = DiscordAnon(PROJECT_ROOT / "resources" / "anon" / "discord_ids.json")
 
         # Slash commands only need the default intents; message_content is the
         # privileged intent the messaging cog's dad-joke listener needs to read

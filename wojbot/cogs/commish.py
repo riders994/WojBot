@@ -21,13 +21,17 @@ the mutating ``/commish load|sync|publish|dump`` are commissioner-only.
 
 The ``/commish db`` subgroup edits the SQL dimension tables directly (list
 leagues/managers, link this server to a league, rename a league, attach a
-Discord user to a manager, add a new manager). The link/rename/linkuser edits
-touch only the non-anonymized, "Discord-owned" columns —
-``dim_league.discord_server_id`` / ``league_name`` and ``dim_manager.discord_id``
-— the same fields ``sync`` seeds but never overwrites, so they run as
-parameterized UPDATEs against the loaded system's connection. Adding a manager
-writes ``player_name``, which *is* anonymized, so it goes through EloSQL's own
-append/push (which tokenizes and updates the reversal map) rather than raw SQL.
+Discord user to a manager, add a new manager).
+
+Discord IDs never reach the warehouse in the clear: ``link``/``linkuser``/
+``adduser`` store an opaque **surrogate bigint** (via ``bot.discord_anon``) in
+``dim_league.discord_server_id`` / ``dim_manager.discord_id`` and keep the real
+value only bot-side, so the listings resolve a surrogate back to the real server
+id / user mention while the DB holds only the opaque value. ``rename`` writes
+``league_name`` (not anonymized) as a parameterized UPDATE. Adding a manager also
+writes ``player_name``, which *is* anonymized by the elo package, so it goes
+through EloSQL's own append/push (tokenizing and updating the reversal map)
+rather than raw SQL.
 """
 
 from __future__ import annotations
@@ -42,6 +46,7 @@ from discord.ext import commands
 from psycopg2 import sql as psql
 
 from ..core.checks import is_commissioner, is_privileged
+from ..core.discord_anon import CATEGORY_MANAGER, CATEGORY_SERVER
 from ..core.elo import (
     ELO_SYS_CONFIG,
     GUILD_LEAGUE_KEY,
@@ -294,8 +299,9 @@ class Commish(commands.Cog):
         if not rows:
             await interaction.followup.send("No leagues in the database yet.")
             return
+        anon = self.bot.discord_anon
         lines = [
-            f"`{int(lid)}` — **{name}** · server `{_bigint(sid)}`"
+            f"`{int(lid)}` — **{name}** · server {_server_ref(anon, sid, interaction.guild_id)}"
             for lid, name, sid in rows
         ]
         await interaction.followup.send("**Leagues**\n" + "\n".join(lines))
@@ -330,8 +336,9 @@ class Commish(commands.Cog):
             await interaction.followup.send("No matching managers.")
             return
         shown = rows[:25]
+        anon = self.bot.discord_anon
         lines = [
-            f"`{int(mid)}` — **{name}** · discord {_discord_ref(did)}"
+            f"`{int(mid)}` — **{name}** · discord {_manager_ref(anon, did)}"
             for mid, name, did in shown
         ]
         footer = f"\n…and {len(rows) - 25} more (narrow with `search`)." if len(rows) > 25 else ""
@@ -346,11 +353,17 @@ class Commish(commands.Cog):
         if elo_sql is None:
             return
         guild_id = interaction.guild_id
-        try:
-            updated = await asyncio.to_thread(
-                _update_column, elo_sql, "dim_league", "discord_server_id",
-                guild_id, "league_id", league_id,
+
+        def _work():
+            # Store an opaque surrogate, not the real guild id.
+            surrogate = self.bot.discord_anon.surrogate(CATEGORY_SERVER, guild_id)
+            return _update_column(
+                elo_sql, "dim_league", "discord_server_id",
+                surrogate, "league_id", league_id,
             )
+
+        try:
+            updated = await asyncio.to_thread(_work)
         except Exception as exc:  # noqa: BLE001 - surface the reason to the commish
             log.exception("db link failed")
             await interaction.followup.send(f"Link failed: `{exc}`")
@@ -403,11 +416,16 @@ class Commish(commands.Cog):
         elo_sql = await self._db_backend(interaction)
         if elo_sql is None:
             return
-        try:
-            updated = await asyncio.to_thread(
-                _update_column, elo_sql, "dim_manager", "discord_id",
-                user.id, "manager_id", manager_id,
+        def _work():
+            # Store an opaque surrogate, not the real user id.
+            surrogate = self.bot.discord_anon.surrogate(CATEGORY_MANAGER, user.id)
+            return _update_column(
+                elo_sql, "dim_manager", "discord_id",
+                surrogate, "manager_id", manager_id,
             )
+
+        try:
+            updated = await asyncio.to_thread(_work)
         except Exception as exc:  # noqa: BLE001 - surface the reason to the commish
             log.exception("db linkuser failed")
             await interaction.followup.send(f"Link failed: `{exc}`")
@@ -440,9 +458,14 @@ class Commish(commands.Cog):
         elo_sql = await self._db_backend(interaction)
         if elo_sql is None:
             return
-        discord_id = user.id if user is not None else None
 
         def _work():
+            # Store an opaque surrogate for the discord id, not the real one.
+            discord_id = (
+                self.bot.discord_anon.surrogate(CATEGORY_MANAGER, user.id)
+                if user is not None
+                else None
+            )
             # player_name is anonymized, so this goes through EloSQL's own
             # append/push (which tokenizes the name and rewrites the reversal
             # map) rather than a raw INSERT. Pull first so the minted id is off
@@ -471,17 +494,30 @@ class Commish(commands.Cog):
         )
 
 
-def _bigint(value) -> str:
-    """Render a possibly-null bigint id for display."""
-    if value is None or (isinstance(value, float) and value != value):  # NaN
+def _is_missing(value) -> bool:
+    return value is None or (isinstance(value, float) and value != value)  # NaN
+
+
+def _server_ref(anon, stored, current_guild_id) -> str:
+    """Render a stored discord_server_id: real id when we know it, else opaque."""
+    if _is_missing(stored):
         return "—"
-    return str(int(value))
+    real = anon.real(CATEGORY_SERVER, stored)
+    if real is None:
+        return f"`{int(stored)}` (opaque)"
+    if real == current_guild_id:
+        return f"`{real}` (this server)"
+    return f"`{real}`"
 
 
-def _discord_ref(value) -> str:
-    """Render a manager's discord_id as a mention when set, else a dash."""
-    rendered = _bigint(value)
-    return f"<@{rendered}>" if rendered != "—" else "— (unlinked)"
+def _manager_ref(anon, stored) -> str:
+    """Render a stored discord_id: a mention when we know it, else opaque."""
+    if _is_missing(stored):
+        return "— (unlinked)"
+    real = anon.real(CATEGORY_MANAGER, stored)
+    if real is None:
+        return f"`{int(stored)}` (opaque)"
+    return f"<@{real}>"
 
 
 def _update_column(elo_sql, table, column, value, key_col, key_val) -> int:
