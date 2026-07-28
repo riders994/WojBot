@@ -93,7 +93,13 @@ class DiscordAnon:
         """
         if _is_missing(surrogate):
             return None
-        return self._by_surrogate.get(category, {}).get(str(int(surrogate)))
+        try:
+            key = str(int(surrogate))
+        except (TypeError, ValueError):
+            # Non-numeric (e.g. an id_generator seed like "A3B9XZ12") is never
+            # one of our surrogates.
+            return None
+        return self._by_surrogate.get(category, {}).get(key)
 
     def _persist(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

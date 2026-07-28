@@ -19,10 +19,12 @@ mutating commands here defer and run one operation at a time.
 Tiering: read-only ``/commish leagues|status`` need admin/privileged access;
 the mutating ``/commish load|sync|publish|dump`` are commissioner-only.
 
-The ``/commish db`` subgroup edits the SQL dimension tables directly (list
-leagues/managers, link this server to a league, rename a league, attach a
-Discord user to a manager, add a new manager, and migrate a league's existing
-real Discord IDs to surrogates).
+The ``/commish db`` subgroup edits the SQL dimension tables directly. The
+intended onboarding order for an existing SQL league is: ``migrate`` (adopt the
+league for this server — binds the server, storing a surrogate for its id), then
+``managers`` (see the roster with platform names), then ``linkuser`` / ``adduser``
+(attach Discord users one at a time). ``leagues`` / ``rename`` / ``link`` round
+out the league-level edits.
 
 Discord IDs never reach the warehouse in the clear: ``link``/``linkuser``/
 ``adduser`` store an opaque **surrogate bigint** (via ``bot.discord_anon``) in
@@ -307,43 +309,67 @@ class Commish(commands.Cog):
         ]
         await interaction.followup.send("**Leagues**\n" + "\n".join(lines))
 
-    @db.command(name="managers", description="List managers in the database.")
-    @app_commands.describe(search="Only show managers whose name matches this")
+    @db.command(name="managers", description="List managers, with platform names, to link.")
+    @app_commands.describe(
+        league="Only this league's managers (defaults to all)",
+        search="Only managers whose name (real or platform) matches this",
+    )
     @is_commissioner()
     async def db_managers(
-        self, interaction: discord.Interaction, search: str | None = None
+        self,
+        interaction: discord.Interaction,
+        league: str | None = None,
+        search: str | None = None,
     ) -> None:
         await interaction.response.defer(ephemeral=True)
         elo_sql = await self._db_backend(interaction)
         if elo_sql is None:
             return
 
-        def _work():
-            elo_sql.pull_dims("manager", overwrite=True)
-            frame = elo_sql.dim_tables["dim_manager"].reset_index()
-            if search:
-                names = frame["player_name"].astype(str)
-                frame = frame[names.str.contains(search, case=False, na=False, regex=False)]
-            cols = ["manager_id", "player_name", "discord_id"]
-            return frame[cols].values.tolist()
+        # A league filter needs that league's id resolved off its own system.
+        league_id = None
+        if league is not None:
+            try:
+                system = await get_or_build(self.bot, interaction.guild_id, league)
+            except Exception as exc:  # noqa: BLE001 - surface the reason to the commish
+                await interaction.followup.send(f"Couldn't load league `{league}`: `{exc}`")
+                return
+            if system.elo_sql is None:
+                await interaction.followup.send("No SQL backend is configured.")
+                return
+            elo_sql = system.elo_sql
+            league_id = await asyncio.to_thread(elo_sql.set_league_config, system.ratings_config)
+            if league_id is None or league_id < 0:
+                await interaction.followup.send(f"League `{league}` isn't in the database yet.")
+                return
 
         try:
-            rows = await asyncio.to_thread(_work)
+            rows = await asyncio.to_thread(_manager_rows, elo_sql, league_id)
         except Exception as exc:  # noqa: BLE001 - surface the reason to the commish
             log.exception("db managers failed")
             await interaction.followup.send(f"Couldn't read managers: `{exc}`")
             return
+        if search:
+            needle = search.lower()
+            rows = [
+                r for r in rows
+                if needle in str(r[1]).lower()
+                or any(needle in str(d).lower() for d in r[2].values())
+            ]
         if not rows:
             await interaction.followup.send("No matching managers.")
             return
-        shown = rows[:25]
         anon = self.bot.discord_anon
+        shown = rows[:25]
         lines = [
-            f"`{int(mid)}` — **{name}** · discord {_manager_ref(anon, did)}"
-            for mid, name, did in shown
+            f"`{mid}` — **{pname}** · {_platform_str(plats)} · {_manager_ref(anon, did)}"
+            for mid, pname, plats, did in shown
         ]
         footer = f"\n…and {len(rows) - 25} more (narrow with `search`)." if len(rows) > 25 else ""
-        await interaction.followup.send("**Managers**\n" + "\n".join(lines) + footer)
+        await interaction.followup.send(
+            _clip("**Managers**\n" + "\n".join(lines) + footer),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
 
     @db.command(name="link", description="Link THIS server to a league in the database.")
     @app_commands.describe(league_id="Target league_id (see /commish db leagues)")
@@ -496,20 +522,22 @@ class Commish(commands.Cog):
 
     @db.command(
         name="migrate",
-        description="Anonymize real Discord IDs already stored for a league.",
+        description="Adopt an existing SQL league for THIS server (do this before linking users).",
     )
-    @app_commands.describe(league="League key to migrate (defaults to this server's)")
+    @app_commands.describe(league="League key to convert (defaults to this server's)")
     @is_commissioner()
     async def db_migrate(
         self, interaction: discord.Interaction, league: str | None = None
     ) -> None:
-        """One-off: replace any real Discord IDs a pre-surrogate build wrote for
-        this league with surrogates, scoped to the named league.
+        """Convert an existing SQL league so this server owns it.
 
-        Detection is by column, not a value-range guess: manager discord_id seeds
-        are alphanumeric (id_generator), so a real one is the numeric outlier;
-        the numeric server id is confirmed against the bot's guilds. Values
-        already surrogated (in the bot's map) are skipped, so it's re-runnable.
+        This is the first step: it binds this Discord server to the league's
+        ``dim_league`` row (storing a surrogate for the server id) and to the
+        bot's per-guild config. It does *not* touch managers — a manager's Elo
+        identity is their Fantrax/Sleeper account, which can't be matched to a
+        Discord user automatically, so users are linked afterwards, one at a
+        time, with ``/commish db linkuser`` / ``adduser``. The reply lists the
+        league's roster (with platform names) so you know who to link next.
         """
         await interaction.response.defer(ephemeral=True)
         try:
@@ -524,99 +552,50 @@ class Commish(commands.Cog):
             )
             return
         elo_sql = system.elo_sql
-        schema = psql.Identifier(elo_sql.schema)
+        guild_id = interaction.guild_id
 
-        def _gather():
+        def _work():
             league_id = elo_sql.set_league_config(system.ratings_config)
             if league_id is None or league_id < 0:
-                return None, None, []
-            conn = elo_sql.conn
-            with conn.cursor() as cur:
-                cur.execute(
-                    psql.SQL(
-                        "SELECT discord_server_id FROM {s}.dim_league WHERE league_id = %s"
-                    ).format(s=schema),
-                    (league_id,),
-                )
-                got = cur.fetchone()
-                server_id = got[0] if got else None
-                # Managers in this league, by the teams they own in its seasons.
-                cur.execute(
-                    psql.SQL(
-                        "SELECT DISTINCT m.manager_id, m.discord_id "
-                        "FROM {s}.dim_manager m "
-                        "JOIN {s}.dim_team t ON t.manager_id = m.manager_id "
-                        "JOIN {s}.dim_online_league o "
-                        "ON o.online_league_id = t.online_league_id "
-                        "WHERE o.league_id = %s"
-                    ).format(s=schema),
-                    (league_id,),
-                )
-                managers = cur.fetchall()
-            conn.rollback()  # read-only; end the transaction cleanly
-            return league_id, server_id, managers
+                return None, []
+            # Store an opaque surrogate for this server, not the real guild id.
+            surrogate = self.bot.discord_anon.surrogate(CATEGORY_SERVER, guild_id)
+            _update_column(
+                elo_sql, "dim_league", "discord_server_id",
+                surrogate, "league_id", league_id,
+            )
+            return league_id, _manager_rows(elo_sql, league_id)
 
         try:
-            league_id, server_id, managers = await asyncio.to_thread(_gather)
+            league_id, rows = await asyncio.to_thread(_work)
         except Exception as exc:  # noqa: BLE001 - surface the reason to the commish
-            log.exception("migrate: gather failed")
-            await interaction.followup.send(f"Migration read failed: `{exc}`")
+            log.exception("migrate failed")
+            await interaction.followup.send(f"Migration failed: `{exc}`")
             return
         if league_id is None:
             await interaction.followup.send(
-                f"League `{system.league}` isn't in the database yet."
+                f"League `{system.league}` isn't in the database yet — sync/publish it first."
             )
             return
+
+        # Bind this server to the league on the bot side too.
+        self.bot.configs.set_guild(guild_id, {GUILD_LEAGUE_KEY: system.league})
 
         anon = self.bot.discord_anon
-        updates = []  # (table, column, surrogate, key_col, key_val)
-
-        # Server id: numeric like its seed, so confirm it's a guild the bot is in.
-        if not _is_missing(server_id):
-            sid = int(server_id)
-            if anon.real(CATEGORY_SERVER, sid) is None and self.bot.get_guild(sid) is not None:
-                updates.append(
-                    ("dim_league", "discord_server_id",
-                     anon.surrogate(CATEGORY_SERVER, sid), "league_id", league_id)
-                )
-
-        # Manager discord_id: a real one is a numeric snowflake; seeds are the
-        # alphanumeric id_generator strings.
-        managers_migrated = 0
-        for manager_id, discord_id in managers:
-            if _is_missing(discord_id):
-                continue
-            value = str(discord_id).strip()
-            if not value.isdigit() or not (15 <= len(value) <= 20):
-                continue  # alphanumeric seed, or not a plausible id
-            if anon.real(CATEGORY_MANAGER, value) is not None:
-                continue  # already a surrogate we minted
-            updates.append(
-                ("dim_manager", "discord_id",
-                 anon.surrogate(CATEGORY_MANAGER, int(value)), "manager_id", int(manager_id))
-            )
-            managers_migrated += 1
-
-        if not updates:
-            await interaction.followup.send(
-                f"Nothing to migrate for `{system.league}` — no real Discord IDs found."
-            )
-            return
-
-        def _apply():
-            for table, column, surrogate, key_col, key_val in updates:
-                _update_column(elo_sql, table, column, surrogate, key_col, key_val)
-
-        try:
-            await asyncio.to_thread(_apply)
-        except Exception as exc:  # noqa: BLE001 - surface the reason to the commish
-            log.exception("migrate: apply failed")
-            await interaction.followup.send(f"Migration write failed: `{exc}`")
-            return
-        servers_migrated = sum(1 for u in updates if u[0] == "dim_league")
+        linked = sum(1 for _, _, _, did in rows if anon.real(CATEGORY_MANAGER, did) is not None)
+        header = (
+            f"Converted **{system.league}** and linked it to this server.\n"
+            f"{len(rows)} manager(s), {linked} already linked. Assign the rest with "
+            f"`/commish db linkuser` (or `/commish db adduser`):"
+        )
+        lines = [
+            f"`{mid}` — **{pname}** · {_platform_str(plats)} · {_manager_ref(anon, did)}"
+            for mid, pname, plats, did in rows
+        ]
+        body = "\n".join(lines) if lines else "(no managers found for this league)"
         await interaction.followup.send(
-            f"Migrated `{system.league}`: anonymized {servers_migrated} server id "
-            f"and {managers_migrated} manager discord id(s)."
+            _clip(f"{header}\n{body}"),
+            allowed_mentions=discord.AllowedMentions.none(),
         )
 
 
@@ -637,13 +616,75 @@ def _server_ref(anon, stored, current_guild_id) -> str:
 
 
 def _manager_ref(anon, stored) -> str:
-    """Render a stored discord_id: a mention when we know it, else opaque."""
+    """Render a stored discord_id: a mention when we know it, else its status."""
     if _is_missing(stored):
         return "— (unlinked)"
     real = anon.real(CATEGORY_MANAGER, stored)
-    if real is None:
-        return f"`{int(stored)}` (opaque)"
-    return f"<@{real}>"
+    if real is not None:
+        return f"<@{real}>"
+    text = str(stored).strip()
+    if text.isdigit():
+        # Numeric but not one of ours — a real id a pre-surrogate build left, or
+        # a foreign value. Shown, not mentioned, so a bad row is visible.
+        return f"`{text}` (opaque)"
+    return "— (unlinked)"  # an alphanumeric id_generator seed = never linked
+
+
+def _platform_str(platforms: dict) -> str:
+    """Render a manager's platform display names, e.g. 'fantrax: natedog'."""
+    if not platforms:
+        return "—"
+    return ", ".join(f"{p}: {name}" for p, name in platforms.items())
+
+
+def _clip(text: str, limit: int = 1900) -> str:
+    """Keep a message under Discord's 2000-char limit."""
+    return text if len(text) <= limit else text[:limit] + "\n… (truncated)"
+
+
+def _manager_rows(elo_sql, league_id=None) -> list:
+    """Managers as ``(manager_id, player_name, {platform: display_name}, discord_id)``.
+
+    Reads through EloSQL's dim cache (deanonymized, so real names show). With a
+    ``league_id`` it keeps only managers who own a team in that league's seasons.
+    Values are the raw stored discord_id (a surrogate, a seed, or None).
+    """
+    elo_sql.pull_dims("manager", overwrite=True)
+    managers = elo_sql.dim_tables["dim_manager"].reset_index()
+
+    # Platform display names (its own dim; composite key, so already flat).
+    platforms: dict[int, dict] = {}
+    try:
+        elo_sql.pull_dims("manager_platform", overwrite=True)
+        mp = elo_sql.dim_tables["dim_manager_platform"]
+        if "manager_id" not in mp.columns:
+            mp = mp.reset_index()
+        for mid, platform, display in zip(mp["manager_id"], mp["platform"], mp["display_name"]):
+            if _is_missing(display):
+                continue
+            platforms.setdefault(int(mid), {})[str(platform)] = display
+    except Exception:  # noqa: BLE001 - platform names are a nicety, not essential
+        log.warning("couldn't load platform display names", exc_info=True)
+
+    # Optional league scope: managers with a team in one of the league's seasons.
+    keep = None
+    if league_id is not None:
+        elo_sql.pull_dims("online_league", overwrite=True)
+        elo_sql.pull_dims("team", overwrite=True)
+        online = elo_sql.dim_tables["dim_online_league"].reset_index()
+        team = elo_sql.dim_tables["dim_team"].reset_index()
+        online_ids = set(online.loc[online["league_id"] == league_id, "online_league_id"])
+        keep = {int(m) for m in team.loc[team["online_league_id"].isin(online_ids), "manager_id"]}
+
+    rows = []
+    for mid, name, discord_id in zip(
+        managers["manager_id"], managers["player_name"], managers["discord_id"]
+    ):
+        mid = int(mid)
+        if keep is not None and mid not in keep:
+            continue
+        rows.append((mid, name, platforms.get(mid, {}), discord_id))
+    return rows
 
 
 def _update_column(elo_sql, table, column, value, key_col, key_val) -> int:
