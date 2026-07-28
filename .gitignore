@@ -7,6 +7,10 @@ sql_config.yml
 sql/manager.log.json
 sql/queries/_queries.json
 
+# Elo engine generated state (written under resources/ by elo-system)
+resources/anon/
+resources/ratings/
+
 # Python
 __pycache__/
 *.py[cod]

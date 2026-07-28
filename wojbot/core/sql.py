@@ -78,6 +78,17 @@ class SqlService:
         """The registered named queries (name -> SQL text)."""
         return self._manager.queries
 
+    @property
+    def connection(self):
+        """The raw psycopg2 connection for the default name, or None if not open.
+
+        Handed to code that manages its own transactions against the shared
+        warehouse — notably the commish cog, which passes it into ``EloSQL`` so
+        the Elo engine reuses this connection instead of opening its own. Callers
+        that share it run outside this service's lock, so keep their use serial.
+        """
+        return self._manager.connections.get(self._default)
+
     def close(self) -> None:
         for conn in self._manager.connections.values():
             try:

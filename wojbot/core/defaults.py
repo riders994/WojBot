@@ -17,6 +17,9 @@ DEFAULT_SERVER_CONFIG: dict = {
     # owner and Discord server administrators always pass regardless of these.
     "commissioner_roles": ["Commish"],
     "admin_roles": ["mods", "Champion", "Commish"],
+    # Which configured Elo league (a key in resources/configs/sys_config.yml)
+    # this server drives. Bound by /commish load; None until a commish loads one.
+    "elo_league": None,
 }
 
 # Per-fantasy-league settings.

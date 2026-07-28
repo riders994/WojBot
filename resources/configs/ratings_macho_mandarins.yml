@@ -1,0 +1,12 @@
+platform: fantrax
+league_type: nba
+league_name: Mao's Macho Mandarins
+current_sports_year: 2025
+is_dynasty: false
+is_roto: false
+k: 60
+seasons:
+  2024:
+    league_id: blk3bn3clw9njuhc
+  2025:
+    league_id: wserh14rmbbpqtcg

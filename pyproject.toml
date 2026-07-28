@@ -12,6 +12,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "PyYAML>=6.0",
     "rv_pytools>=1.2.1",  # SQL connection manager + named-query registry (psycopg2)
+    "elo-system>=2.0.1",  # Elo ratings engine (Fantrax/Sleeper) driven by the commish cog
 ]
 
 [project.scripts]

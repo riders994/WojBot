@@ -1,0 +1,8 @@
+csv_config_name: csv_config.yml
+default_league: macho_mandarins
+ratings_configs:
+  die_nasty: ratings_die_nasty.yml
+  macho_mandarins: ratings_macho_mandarins.yml
+reader: csv
+sql_config_name: sql_config.yml
+writer: csv
