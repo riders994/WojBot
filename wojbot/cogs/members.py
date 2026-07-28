@@ -1,74 +1,90 @@
+"""Members cog: small, self-contained member-info commands.
+
+Ported from v1's ``MembersCog``. These work on any server (they don't touch
+league data) and are grouped under ``/member``. Each takes an optional ``user``
+and defaults to the caller. Modernized for discord.py 2.x: Discord-native
+timestamps instead of raw ``datetime`` text, and ``display_avatar`` instead of
+the removed ``avatar_url``.
+"""
+
+from __future__ import annotations
+
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 
-class MembersCog(commands.Cog, name="Member Commands"):
-    """
-    Commands associated with members. These are meant to work on non-league servers.
-    """
-    def __init__(self, bot):
+class Members(commands.Cog):
+    """Info about server members."""
+
+    group = app_commands.Group(
+        name="member",
+        description="Look up info about a server member.",
+        guild_only=True,
+    )
+
+    def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    @commands.command()
-    @commands.guild_only()
-    async def joined(self, ctx, *, member: discord.Member = None):
-        """
-        Says when a member joined.
-        """
+    @group.command(name="joined", description="Show when a member joined the server.")
+    @app_commands.describe(user="Member to look up (defaults to you).")
+    async def joined(
+        self, interaction: discord.Interaction, user: discord.Member | None = None
+    ) -> None:
+        member = user or interaction.user
+        if member.joined_at is None:
+            await interaction.response.send_message(
+                f"{member.display_name}'s join date isn't available.", ephemeral=True
+            )
+            return
+        stamp = discord.utils.format_dt(member.joined_at, style="F")
+        relative = discord.utils.format_dt(member.joined_at, style="R")
+        await interaction.response.send_message(
+            f"{member.display_name} joined on {stamp} ({relative})."
+        )
 
-        if member is None:
-            member = ctx.author
+    @group.command(name="toprole", description="Show a member's highest role.")
+    @app_commands.describe(user="Member to look up (defaults to you).")
+    async def toprole(
+        self, interaction: discord.Interaction, user: discord.Member | None = None
+    ) -> None:
+        member = user or interaction.user
+        await interaction.response.send_message(
+            f"The top role for {member.display_name} is **{member.top_role.name}**."
+        )
 
-        await ctx.send(f'{member.display_name} joined on {member.joined_at}')
+    @group.command(name="roles", description="List a member's roles.")
+    @app_commands.describe(user="Member to look up (defaults to you).")
+    async def roles(
+        self, interaction: discord.Interaction, user: discord.Member | None = None
+    ) -> None:
+        member = user or interaction.user
+        roles = [r.mention for r in reversed(member.roles) if r.name != "@everyone"]
+        listed = ", ".join(roles) if roles else "(no roles)"
+        await interaction.response.send_message(
+            f"Roles for {member.display_name}: {listed}",
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
 
-    @commands.command(name='top_role', aliases=['toprole'])
-    @commands.guild_only()
-    async def show_toprole(self, ctx, *, member: discord.Member = None):
-        """
-        Simple command which shows the members Top Role.
-        """
-
-        if member is None:
-            member = ctx.author
-
-        await ctx.send(f'The top role for {member.display_name} is {member.top_role.name}')
-
-    @commands.command(name='roles', aliases=['show_roles', 'list_roles'])
-    @commands.guild_only()
-    async def show_roles(self, ctx, *, member: discord.Member = None):
-        """
-        Simple command which shows the members roles
-        """
-
-        if member is None:
-            member = ctx.author
-        roles = [r.name for r in member.roles if r.name != '@everyone']
-        await ctx.send(f'The roles for {member.display_name} are ' + ', '.join(roles))
-
-    @commands.command(name='perms', aliases=['perms_for', 'permissions'])
-    @commands.guild_only()
-    async def check_permissions(self, ctx, *, member: discord.Member = None):
-        """
-        A simple command which checks a members Guild Permissions.
-        If member is not provided, the author will be checked.
-        """
-
-        if not member:
-            member = ctx.author
-
-        # Here we check if the value of each permission is True.
-        perms = '\n'.join(perm for perm, value in member.guild_permissions if value)
-
-        # And to make it look nice, we wrap it in an Embed.
-        embed = discord.Embed(title='Permissions for:', description=ctx.guild.name, colour=member.colour)
-        embed.set_author(icon_url=member.avatar_url, name=str(member))
-
-        # \uFEFF is a Zero-Width Space, which basically allows us to have an empty field name.
-        embed.add_field(name='\uFEFF', value=perms)
-
-        await ctx.send(content=None, embed=embed)
-        # Thanks to Gio for the Command.
+    @group.command(name="perms", description="Show a member's server permissions.")
+    @app_commands.describe(user="Member to look up (defaults to you).")
+    async def perms(
+        self, interaction: discord.Interaction, user: discord.Member | None = None
+    ) -> None:
+        member = user or interaction.user
+        granted = [
+            perm.replace("_", " ").title()
+            for perm, value in member.guild_permissions
+            if value
+        ]
+        embed = discord.Embed(
+            title="Permissions",
+            description=", ".join(granted) if granted else "(none)",
+            colour=member.colour,
+        )
+        embed.set_author(name=str(member), icon_url=member.display_avatar.url)
+        await interaction.response.send_message(embed=embed)
 
 
-def setup(bot):
-    bot.add_cog(MembersCog(bot))
+async def setup(bot: commands.Bot) -> None:
+    await bot.add_cog(Members(bot))

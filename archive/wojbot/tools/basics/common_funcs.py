@@ -1,13 +1,23 @@
 from collections import defaultdict
+from typing import List, Dict, Tuple, Any
+
 import numpy as np
-from numpy import AxisError
+import os
+import json
+# from numpy import AxisError
 
 """
 Common functions that could be used amongst different Cogs
 """
 
+def get_creds(key_list: List[str]) -> Dict[str, str]:
+    return {key: os.environ[key] for key in key_list}
 
-def create_flag_dict(messages):
+def dump_cred_list(loc: str, key_list: List[str]) -> None:
+    with open(loc, 'w') as f:
+        json.dump({'keys': key_list}, f)
+
+def create_flag_dict_from_msg(messages: str):
     """
     Digests a message, and produces a dictionary of all flags and the args associated with them.
     :param messages: str. A string of flags and args.
@@ -21,7 +31,7 @@ def create_flag_dict(messages):
     is_flagged = None
     for i, msg in enumerate(messages.split(' ')):
         if msg[0] == '-':
-            flag = msg.strip('-')
+            flag = msg[1:]
             is_flagged = i + 1
         if i == is_flagged:
             res[flag].append(msg)
@@ -30,6 +40,17 @@ def create_flag_dict(messages):
 
     return res
 
+def create_flag_dict_from_args(args: Tuple[Any]):
+    res = defaultdict(list)
+    is_flagged = None
+    for i, arg in enumerate(args):
+        if arg[0] == '-':
+            flag = arg[1:]
+            is_flagged = i + 1
+        if i == is_flagged:
+            res[flag].append(arg)
+        if arg[0] == '+':
+            res[arg[1:]].append(True)
 
 def get_flag(flag, flag_map, flag_dict):
     """

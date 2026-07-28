@@ -1,6 +1,25 @@
+# Secrets / environment
+.env
 creds/set_creds.sh
-wojbot/cogs/__pycache__
+sql_config.yml
+
+# Generated SQL manager artifacts (keep the .sql source files, ignore the state)
+sql/manager.log.json
+sql/queries/_queries.json
+
+# Elo engine generated state (written under resources/ by elo-system)
+resources/anon/
+resources/ratings/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# Logs & data
+*.log
 *.csv
-discord.log
+
+# Editors
 .idea/
-.idea/*

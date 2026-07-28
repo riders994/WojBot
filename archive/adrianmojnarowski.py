@@ -1,4 +1,4 @@
-from .tools.wojbot import WojBot
+from .wojbot.wojbot import WojBot2
 import os
 
 TOKEN = os.environ['DISCORD_TOKEN']
@@ -8,5 +8,5 @@ This script is supposed to be used to manage the WojBot script, but I'm not sure
 """
 
 def _main():
-    bot = WojBot()
+    bot = WojBot2()
     bot.run(TOKEN)

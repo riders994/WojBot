@@ -1,0 +1,451 @@
+current_season: 2026
+current_sports_year: 2026
+is_dynasty: true
+is_roto: false
+k: 60
+league_id: -1
+league_type: nfl
+osa_factor: 0.4
+platform: sleeper
+scoring: median
+seasons:
+  2022:
+    current_season_length: 17
+    dynasty_start_week: 0
+    last_scored_week: null
+    league_id: '860329110977785856'
+    league_members:
+      '738089321269194752':
+        curr_name: WR Room of Nightmares
+        is_commish: true
+        names:
+        - WR Room of Nightmares
+        short_name: GeneralH
+        standing: 5
+        team_id: '1'
+      '74842634216423424':
+        curr_name: Lamargaret Chase Smith
+        is_commish: false
+        names:
+        - Lamargaret Chase Smith
+        short_name: tyransosaura
+        standing: 7
+        team_id: '3'
+      '859950573120794624':
+        curr_name: Solaire's Sunbro
+        is_commish: false
+        names:
+        - Solaire's Sunbro
+        short_name: seireikhaan
+        standing: 4
+        team_id: '6'
+      '859993191833767936':
+        curr_name: Night Vale Scorpions
+        is_commish: false
+        names:
+        - Night Vale Scorpions
+        short_name: Votto
+        standing: 8
+        team_id: '2'
+      '860003302220337152':
+        curr_name: You Can't Stop The Tank
+        is_commish: false
+        names:
+        - You Can't Stop The Tank
+        short_name: MinorityWhip
+        standing: 10
+        team_id: '4'
+      '860373697800835072':
+        curr_name: Winds of Shit
+        is_commish: false
+        names:
+        - Winds of Shit
+        short_name: jordanm69
+        standing: 6
+        team_id: '5'
+      '860583232230518784':
+        curr_name: Foosball is the Devil
+        is_commish: false
+        names:
+        - Foosball is the Devil
+        short_name: johqui
+        standing: 1
+        team_id: '7'
+      '860640244523986944':
+        curr_name: Team Troy
+        is_commish: false
+        names:
+        - Team Troy
+        short_name: greenarrowgem
+        standing: 9
+        team_id: '8'
+      '860715068738908160':
+        curr_name: Bench Of Shame
+        is_commish: false
+        names:
+        - Bench Of Shame
+        short_name: andrewmarchus
+        standing: 3
+        team_id: '9'
+      '862385639717478400':
+        curr_name: GoochGrabbersNeverDie
+        is_commish: false
+        names:
+        - GoochGrabbersNeverDie
+        short_name: Zachfang1414
+        standing: 2
+        team_id: '10'
+    league_name: League Free, Die Nasty
+    playoff_start: 15
+  2023:
+    current_season_length: 17
+    dynasty_start_week: 18
+    last_scored_week: null
+    league_id: '920833359809437696'
+    league_members:
+      '738089321269194752':
+        curr_name: WR Room of Nightmares
+        is_commish: true
+        names:
+        - WR Room of Nightmares
+        short_name: GeneralH
+        standing: 3
+        team_id: '1'
+      '74842634216423424':
+        curr_name: 2nd Tier 2nd Furious
+        is_commish: false
+        names:
+        - 2nd Tier 2nd Furious
+        short_name: tyransosaura
+        standing: 4
+        team_id: '3'
+      '859950573120794624':
+        curr_name: Wasting Time on MS Paint
+        is_commish: false
+        names:
+        - Wasting Time on MS Paint
+        short_name: seireikhaan
+        standing: 8
+        team_id: '6'
+      '859993191833767936':
+        curr_name: Night Vale Scorpions
+        is_commish: false
+        names:
+        - Night Vale Scorpions
+        short_name: Votto
+        standing: 6
+        team_id: '2'
+      '860003302220337152':
+        curr_name: Mike Pence's Courage
+        is_commish: false
+        names:
+        - Mike Pence's Courage
+        short_name: MinorityWhip
+        standing: 7
+        team_id: '4'
+      '860373697800835072':
+        curr_name: I Am the Liquor
+        is_commish: false
+        names:
+        - I Am the Liquor
+        short_name: jordanm69
+        standing: 9
+        team_id: '5'
+      '860583232230518784':
+        curr_name: Foosball is the Devil
+        is_commish: false
+        names:
+        - Foosball is the Devil
+        short_name: johqui
+        standing: 5
+        team_id: '7'
+      '860640244523986944':
+        curr_name: Team Jess
+        is_commish: false
+        names:
+        - Team Jess
+        short_name: greenarrowgem
+        standing: 10
+        team_id: '8'
+      '860715068738908160':
+        curr_name: Doing Moore With Less
+        is_commish: false
+        names:
+        - Doing Moore With Less
+        short_name: andrewmarchus
+        standing: 1
+        team_id: '9'
+      '862385639717478400':
+        curr_name: GoochGrabbersNeverDie
+        is_commish: false
+        names:
+        - GoochGrabbersNeverDie
+        short_name: Zachfang1414
+        standing: 2
+        team_id: '10'
+    league_name: League Free, Die Nasty
+    playoff_start: 15
+  2024:
+    current_season_length: 17
+    dynasty_start_week: 36
+    last_scored_week: null
+    league_id: '1063131085976006656'
+    league_members:
+      '1101559979368218624':
+        curr_name: HurtsHopefullyHealthy
+        is_commish: false
+        names:
+        - HurtsHopefullyHealthy
+        short_name: ruppdj
+        standing: 10
+        team_id: '7'
+      '738089321269194752':
+        curr_name: Waiting for Jamot
+        is_commish: true
+        names:
+        - Waiting for Jamot
+        short_name: GeneralH
+        standing: 8
+        team_id: '1'
+      '74842634216423424':
+        curr_name: Defying Jakobity
+        is_commish: false
+        names:
+        - Defying Jakobity
+        short_name: tyransosaura
+        standing: 5
+        team_id: '3'
+      '859950573120794624':
+        curr_name: 'Expeditions : Rome'
+        is_commish: false
+        names:
+        - 'Expeditions : Rome'
+        short_name: seireikhaan
+        standing: 4
+        team_id: '6'
+      '859993191833767936':
+        curr_name: Night Vale Scorpions
+        is_commish: false
+        names:
+        - Night Vale Scorpions
+        short_name: Votto
+        standing: 1
+        team_id: '2'
+      '860003302220337152':
+        curr_name: The Pence of Egypt
+        is_commish: false
+        names:
+        - The Pence of Egypt
+        short_name: MinorityWhip
+        standing: 6
+        team_id: '4'
+      '860373697800835072':
+        curr_name: I Am the Liquor
+        is_commish: false
+        names:
+        - I Am the Liquor
+        short_name: jordanm69
+        standing: 2
+        team_id: '5'
+      '860640244523986944':
+        curr_name: Gods of Egypt
+        is_commish: false
+        names:
+        - Gods of Egypt
+        short_name: greenarrowgem
+        standing: 9
+        team_id: '8'
+      '860715068738908160':
+        curr_name: Doing Moore With Penix
+        is_commish: false
+        names:
+        - Doing Moore With Penix
+        short_name: andrewmarchus
+        standing: 3
+        team_id: '9'
+      '862385639717478400':
+        curr_name: GoochGrabbersNeverDie
+        is_commish: false
+        names:
+        - GoochGrabbersNeverDie
+        short_name: Zachfang1414
+        standing: 7
+        team_id: '10'
+    league_name: League Free, Die Nasty
+    playoff_start: 15
+  2025:
+    current_season_length: 17
+    dynasty_start_week: 54
+    last_scored_week: null
+    league_id: '1196653288641003520'
+    league_members:
+      '1101559979368218624':
+        curr_name: PlayingWhosLeft
+        is_commish: false
+        names:
+        - PlayingWhosLeft
+        short_name: ruppdj
+        standing: 9
+        team_id: '7'
+      '1224113715251527680':
+        curr_name: sunkcosts
+        is_commish: false
+        names:
+        - sunkcosts
+        short_name: sunkcosts
+        standing: 10
+        team_id: '10'
+      '738089321269194752':
+        curr_name: Waiting for Jamot
+        is_commish: true
+        names:
+        - Waiting for Jamot
+        short_name: GeneralH
+        standing: 3
+        team_id: '1'
+      '74842634216423424':
+        curr_name: Defying Jakobity
+        is_commish: false
+        names:
+        - Defying Jakobity
+        short_name: tyransosaura
+        standing: 6
+        team_id: '3'
+      '859950573120794624':
+        curr_name: 'Expeditions : Rome'
+        is_commish: false
+        names:
+        - 'Expeditions : Rome'
+        short_name: seireikhaan
+        standing: 2
+        team_id: '6'
+      '859993191833767936':
+        curr_name: Night Vale Scorpions
+        is_commish: false
+        names:
+        - Night Vale Scorpions
+        short_name: Votto
+        standing: 7
+        team_id: '2'
+      '860003302220337152':
+        curr_name: The Pence of Egypt
+        is_commish: false
+        names:
+        - The Pence of Egypt
+        short_name: MinorityWhip
+        standing: 1
+        team_id: '4'
+      '860373697800835072':
+        curr_name: I Am the Liquor
+        is_commish: false
+        names:
+        - I Am the Liquor
+        short_name: jordanm69
+        standing: 8
+        team_id: '5'
+      '860640244523986944':
+        curr_name: Jonesing for a Win
+        is_commish: false
+        names:
+        - Jonesing for a Win
+        short_name: greenarrowgem
+        standing: 4
+        team_id: '8'
+      '860715068738908160':
+        curr_name: Doing Moore With Penix
+        is_commish: false
+        names:
+        - Doing Moore With Penix
+        short_name: andrewmarchus
+        standing: 5
+        team_id: '9'
+    league_name: League Free, Die Nasty
+    playoff_start: 15
+  2026:
+    current_season_length: 0
+    dynasty_start_week: 72
+    last_scored_week: null
+    league_id: '1327122339342606336'
+    league_members:
+      '1101559979368218624':
+        curr_name: PlayingWhosLeft
+        is_commish: false
+        names:
+        - PlayingWhosLeft
+        short_name: ruppdj
+        standing: 7
+        team_id: '7'
+      '1224113715251527680':
+        curr_name: sunkcosts
+        is_commish: false
+        names:
+        - sunkcosts
+        short_name: sunkcosts
+        standing: 10
+        team_id: '10'
+      '738089321269194752':
+        curr_name: Waiting for Jamot
+        is_commish: true
+        names:
+        - Waiting for Jamot
+        short_name: GeneralH
+        standing: 1
+        team_id: '1'
+      '74842634216423424':
+        curr_name: Defying Jakobity
+        is_commish: false
+        names:
+        - Defying Jakobity
+        short_name: tyransosaura
+        standing: 3
+        team_id: '3'
+      '859950573120794624':
+        curr_name: 'Expeditions : Rome'
+        is_commish: false
+        names:
+        - 'Expeditions : Rome'
+        short_name: seireikhaan
+        standing: 6
+        team_id: '6'
+      '859993191833767936':
+        curr_name: Night Vale Scorpions
+        is_commish: false
+        names:
+        - Night Vale Scorpions
+        short_name: Votto
+        standing: 2
+        team_id: '2'
+      '860003302220337152':
+        curr_name: The Pence of Egypt
+        is_commish: false
+        names:
+        - The Pence of Egypt
+        short_name: MinorityWhip
+        standing: 4
+        team_id: '4'
+      '860373697800835072':
+        curr_name: I Am the Liquor
+        is_commish: false
+        names:
+        - I Am the Liquor
+        short_name: jordanm69
+        standing: 5
+        team_id: '5'
+      '860640244523986944':
+        curr_name: Jonesing for a Win
+        is_commish: false
+        names:
+        - Jonesing for a Win
+        short_name: greenarrowgem
+        standing: 8
+        team_id: '8'
+      '860715068738908160':
+        curr_name: Doing Moore With Penix
+        is_commish: false
+        names:
+        - Doing Moore With Penix
+        short_name: andrewmarchus
+        standing: 9
+        team_id: '9'
+    league_name: League Free, Die Nasty
+    playoff_start: 15
