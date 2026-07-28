@@ -54,6 +54,15 @@ async def is_privileged_user(interaction: discord.Interaction) -> bool:
     return await _has_role_privilege(interaction, ADMIN_ROLES_KEY)
 
 
+async def is_bot_owner_user(interaction: discord.Interaction) -> bool:
+    """Predicate: is the caller the bot's owner?
+
+    The only tier that is not per-server — it gates settings that apply to every
+    guild at once, which no single server's admin should be able to move.
+    """
+    return await interaction.client.is_owner(interaction.user)
+
+
 def is_commissioner():
     """Slash-command check decorator: commissioner-only."""
     return app_commands.check(is_commissioner_user)
@@ -62,3 +71,8 @@ def is_commissioner():
 def is_privileged():
     """Slash-command check decorator: admin/privileged-only."""
     return app_commands.check(is_privileged_user)
+
+
+def is_bot_owner():
+    """Slash-command check decorator: bot-owner-only."""
+    return app_commands.check(is_bot_owner_user)

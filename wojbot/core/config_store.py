@@ -26,6 +26,7 @@ from .defaults import (
     DEFAULT_BOT_CONFIG,
     DEFAULT_LEAGUE_CONFIG,
     DEFAULT_SERVER_CONFIG,
+    INHERITED_FROM_BOT,
 )
 
 log = logging.getLogger(__name__)
@@ -94,7 +95,22 @@ class ConfigStore:
         return {**DEFAULT_BOT_CONFIG, **self._bot}
 
     def get_guild(self, guild_id: int) -> dict:
-        return {**DEFAULT_SERVER_CONFIG, **self._guilds.get(guild_id, {})}
+        """This server's settings: code defaults, then bot-wide, then its own.
+
+        The middle layer is what makes a bot-wide setting a *default* rather
+        than an override — a server that has stored its own value keeps it, so
+        moving the global never silently changes a server that already chose.
+        """
+        stored = self._guilds.get(guild_id, {})
+        inherited = {
+            key: value for key, value in self.get_bot().items()
+            if key in INHERITED_FROM_BOT
+        }
+        return {**DEFAULT_SERVER_CONFIG, **inherited, **stored}
+
+    def guild_has_own(self, guild_id: int, key: str) -> bool:
+        """Whether this server set ``key`` itself, as against inheriting it."""
+        return key in self._guilds.get(guild_id, {})
 
     def get_league(self, league_id: int) -> dict:
         return {**DEFAULT_LEAGUE_CONFIG, **self._leagues.get(league_id, {})}
@@ -109,6 +125,21 @@ class ConfigStore:
     def set_guild(self, guild_id: int, patch: dict) -> dict:
         stored = self._guilds.setdefault(guild_id, {})
         stored.update(patch)
+        _write_yaml(self.base_dir / _SERVERS_DIR / f"{guild_id}.yaml", stored)
+        return self.get_guild(guild_id)
+
+    def clear_guild(self, guild_id: int, *keys: str) -> dict:
+        """Drop this server's own value for ``keys``, so it inherits again.
+
+        The counterpart to setting one: without it a server that ever chose is
+        stuck with its choice for good, because storing a value is what detaches
+        it from the bot-wide default.
+        """
+        stored = self._guilds.get(guild_id)
+        if not stored or not any(key in stored for key in keys):
+            return self.get_guild(guild_id)
+        for key in keys:
+            stored.pop(key, None)
         _write_yaml(self.base_dir / _SERVERS_DIR / f"{guild_id}.yaml", stored)
         return self.get_guild(guild_id)
 

@@ -1,10 +1,15 @@
-"""Messaging cog: the dad-joke listener, its per-server toggle, and /cat.
+"""Messaging cog: the dad-joke listener and /cat.
 
 Ported from v1's Messaging cog (echo/add dropped for now). Two upgrades:
 - the toggle is persisted per-server via ``bot.configs`` instead of v1's in-memory
   per-channel dict (which referenced a ``dadjoke_toggle`` attribute that never
   existed on the bot);
 - dad-joke detection is a single regex helper rather than stacked ``.find()`` calls.
+
+The toggle itself lives in the setup cog (``/setup dadjokes``), with everything
+else that writes settings — this cog only reads ``dad_joke`` to decide whether to
+answer. Keeping the writes in one place is what keeps their gating consistent:
+as its own command it was the one setting any member could change.
 
 Reading message content requires the privileged ``message_content`` intent
 (enabled in bot.py and in the Discord developer portal).
@@ -42,27 +47,6 @@ class Messaging(commands.Cog):
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-
-    @app_commands.command(description="Turn dad jokes on/off for this server (omit to check).")
-    @app_commands.describe(enabled="True to enable, False to disable. Omit to see the current setting.")
-    @app_commands.guild_only()
-    async def dadjokes(
-        self, interaction: discord.Interaction, enabled: bool | None = None
-    ) -> None:
-        guild_id = interaction.guild_id
-        if enabled is None:
-            current = self.bot.configs.get_guild(guild_id)["dad_joke"]
-            state = "on" if current else "off"
-            await interaction.response.send_message(
-                f"Dad jokes are currently **{state}** for this server."
-            )
-            return
-
-        self.bot.configs.set_guild(guild_id, {"dad_joke": enabled})
-        state = "on" if enabled else "off"
-        await interaction.response.send_message(
-            f"Dad jokes are now **{state}** for this server."
-        )
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
