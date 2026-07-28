@@ -12,7 +12,10 @@ dependencies = [
     "python-dotenv>=1.0",
     "PyYAML>=6.0",
     "rv_pytools>=1.2.1",  # SQL connection manager + named-query registry (psycopg2)
-    "elo-system>=2.0.1",  # Elo ratings engine (Fantrax/Sleeper) driven by the commish cog
+    # Elo ratings engine driven by the commish cog. The sleeper extra is not
+    # optional here: die_nasty is a Sleeper league, and without it every scrape
+    # of one raises ImportError from SleeperScraper.
+    "elo-system[sleeper]>=2.0.1",
 ]
 
 [project.scripts]
