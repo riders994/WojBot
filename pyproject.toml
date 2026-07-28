@@ -11,7 +11,11 @@ dependencies = [
     "discord.py==2.7.1",
     "python-dotenv>=1.0",
     "PyYAML>=6.0",
-    "rv_pytools>=1.2.1",  # SQL connection manager + named-query registry (psycopg2)
+    # SQL connection manager + named-query registry (psycopg2), and the
+    # anonymizer the Elo backend tokenises through. 1.3 is the floor: before it,
+    # anonymize() renumbered its whole map on every call, so each sync silently
+    # repointed the tokens already stored in the warehouse.
+    "rv_pytools>=1.3.0",
     # Elo ratings engine driven by the commish cog. The sleeper extra is not
     # optional here: die_nasty is a Sleeper league, and without it every scrape
     # of one raises ImportError from SleeperScraper.
