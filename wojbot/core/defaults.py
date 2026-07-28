@@ -13,6 +13,10 @@ DEFAULT_BOT_CONFIG: dict = {}
 # Per-Discord-server (guild) settings.
 DEFAULT_SERVER_CONFIG: dict = {
     "dad_joke": False,
+    # Role names that grant command privileges (see wojbot.core.checks). The bot
+    # owner and Discord server administrators always pass regardless of these.
+    "commissioner_roles": ["Commish"],
+    "admin_roles": ["mods", "Champion", "Commish"],
 }
 
 # Per-fantasy-league settings.

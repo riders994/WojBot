@@ -43,6 +43,22 @@ class WojBotV2(commands.Bot):
             intents=intents,
             help_command=None,
         )
+        # Turn failed permission checks (and other app-command errors) into a
+        # friendly ephemeral reply instead of a silent failure / raw traceback.
+        self.tree.on_error = self._on_app_command_error
+
+    async def _on_app_command_error(
+        self, interaction: discord.Interaction, error: discord.app_commands.AppCommandError
+    ) -> None:
+        if isinstance(error, discord.app_commands.CheckFailure):
+            message = "You don't have permission to use this command."
+        else:
+            log.exception("Unhandled app command error", exc_info=error)
+            message = "Something went wrong running that command."
+        if interaction.response.is_done():
+            await interaction.followup.send(message, ephemeral=True)
+        else:
+            await interaction.response.send_message(message, ephemeral=True)
 
     async def setup_hook(self) -> None:
         """Load all discovered cogs, then sync the application command tree."""
