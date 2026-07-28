@@ -446,13 +446,15 @@ class Commish(commands.Cog):
         def _work():
             # Store an opaque surrogate, not the real user id.
             surrogate = self.bot.discord_anon.surrogate(CATEGORY_MANAGER, user.id)
-            return _update_column(
+            updated = _update_column(
                 elo_sql, "dim_manager", "discord_id",
                 surrogate, "manager_id", manager_id,
             )
+            # Read back who that manager is, to confirm the right one was linked.
+            return updated, (_manager_rows(elo_sql) if updated else [])
 
         try:
-            updated = await asyncio.to_thread(_work)
+            updated, rows = await asyncio.to_thread(_work)
         except Exception as exc:  # noqa: BLE001 - surface the reason to the commish
             log.exception("db linkuser failed")
             await interaction.followup.send(f"Link failed: `{exc}`")
@@ -460,8 +462,10 @@ class Commish(commands.Cog):
         if not updated:
             await interaction.followup.send(f"No manager with `manager_id` {manager_id}.")
             return
+        identity = _manager_identity(rows, manager_id)
+        who = f"{identity} (manager `{manager_id}`)" if identity else f"manager `{manager_id}`"
         await interaction.followup.send(
-            f"Attached {user.mention} (`{user.id}`) to manager `{manager_id}`.",
+            f"Attached {user.mention} to {who}.",
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
@@ -635,6 +639,15 @@ def _platform_str(platforms: dict) -> str:
     if not platforms:
         return "—"
     return ", ".join(f"{p}: {name}" for p, name in platforms.items())
+
+
+def _manager_identity(rows, manager_id) -> str | None:
+    """A manager's ``**name** · platform: display`` label from _manager_rows, or None."""
+    for mid, name, platforms, _ in rows:
+        if mid == manager_id:
+            platform = _platform_str(platforms)
+            return f"**{name}**" + (f" · {platform}" if platform != "—" else "")
+    return None
 
 
 def _clip(text: str, limit: int = 1900) -> str:
