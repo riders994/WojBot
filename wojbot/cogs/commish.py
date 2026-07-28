@@ -21,7 +21,8 @@ the mutating ``/commish load|sync|publish|dump`` are commissioner-only.
 
 The ``/commish db`` subgroup edits the SQL dimension tables directly (list
 leagues/managers, link this server to a league, rename a league, attach a
-Discord user to a manager, add a new manager).
+Discord user to a manager, add a new manager, and migrate a league's existing
+real Discord IDs to surrogates).
 
 Discord IDs never reach the warehouse in the clear: ``link``/``linkuser``/
 ``adduser`` store an opaque **surrogate bigint** (via ``bot.discord_anon``) in
@@ -491,6 +492,131 @@ class Commish(commands.Cog):
         await interaction.followup.send(
             f"Added manager **{name}** as `manager_id` {manager_id}{suffix}.",
             allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    @db.command(
+        name="migrate",
+        description="Anonymize real Discord IDs already stored for a league.",
+    )
+    @app_commands.describe(league="League key to migrate (defaults to this server's)")
+    @is_commissioner()
+    async def db_migrate(
+        self, interaction: discord.Interaction, league: str | None = None
+    ) -> None:
+        """One-off: replace any real Discord IDs a pre-surrogate build wrote for
+        this league with surrogates, scoped to the named league.
+
+        Detection is by column, not a value-range guess: manager discord_id seeds
+        are alphanumeric (id_generator), so a real one is the numeric outlier;
+        the numeric server id is confirmed against the bot's guilds. Values
+        already surrogated (in the bot's map) are skipped, so it's re-runnable.
+        """
+        await interaction.response.defer(ephemeral=True)
+        try:
+            system = await get_or_build(self.bot, interaction.guild_id, league)
+        except Exception as exc:  # noqa: BLE001 - surface the reason to the commish
+            log.exception("migrate: load failed")
+            await interaction.followup.send(f"Couldn't load league: `{exc}`")
+            return
+        if system.elo_sql is None:
+            await interaction.followup.send(
+                "No SQL backend is configured — check `sql_config.yml`."
+            )
+            return
+        elo_sql = system.elo_sql
+        schema = psql.Identifier(elo_sql.schema)
+
+        def _gather():
+            league_id = elo_sql.set_league_config(system.ratings_config)
+            if league_id is None or league_id < 0:
+                return None, None, []
+            conn = elo_sql.conn
+            with conn.cursor() as cur:
+                cur.execute(
+                    psql.SQL(
+                        "SELECT discord_server_id FROM {s}.dim_league WHERE league_id = %s"
+                    ).format(s=schema),
+                    (league_id,),
+                )
+                got = cur.fetchone()
+                server_id = got[0] if got else None
+                # Managers in this league, by the teams they own in its seasons.
+                cur.execute(
+                    psql.SQL(
+                        "SELECT DISTINCT m.manager_id, m.discord_id "
+                        "FROM {s}.dim_manager m "
+                        "JOIN {s}.dim_team t ON t.manager_id = m.manager_id "
+                        "JOIN {s}.dim_online_league o "
+                        "ON o.online_league_id = t.online_league_id "
+                        "WHERE o.league_id = %s"
+                    ).format(s=schema),
+                    (league_id,),
+                )
+                managers = cur.fetchall()
+            conn.rollback()  # read-only; end the transaction cleanly
+            return league_id, server_id, managers
+
+        try:
+            league_id, server_id, managers = await asyncio.to_thread(_gather)
+        except Exception as exc:  # noqa: BLE001 - surface the reason to the commish
+            log.exception("migrate: gather failed")
+            await interaction.followup.send(f"Migration read failed: `{exc}`")
+            return
+        if league_id is None:
+            await interaction.followup.send(
+                f"League `{system.league}` isn't in the database yet."
+            )
+            return
+
+        anon = self.bot.discord_anon
+        updates = []  # (table, column, surrogate, key_col, key_val)
+
+        # Server id: numeric like its seed, so confirm it's a guild the bot is in.
+        if not _is_missing(server_id):
+            sid = int(server_id)
+            if anon.real(CATEGORY_SERVER, sid) is None and self.bot.get_guild(sid) is not None:
+                updates.append(
+                    ("dim_league", "discord_server_id",
+                     anon.surrogate(CATEGORY_SERVER, sid), "league_id", league_id)
+                )
+
+        # Manager discord_id: a real one is a numeric snowflake; seeds are the
+        # alphanumeric id_generator strings.
+        managers_migrated = 0
+        for manager_id, discord_id in managers:
+            if _is_missing(discord_id):
+                continue
+            value = str(discord_id).strip()
+            if not value.isdigit() or not (15 <= len(value) <= 20):
+                continue  # alphanumeric seed, or not a plausible id
+            if anon.real(CATEGORY_MANAGER, value) is not None:
+                continue  # already a surrogate we minted
+            updates.append(
+                ("dim_manager", "discord_id",
+                 anon.surrogate(CATEGORY_MANAGER, int(value)), "manager_id", int(manager_id))
+            )
+            managers_migrated += 1
+
+        if not updates:
+            await interaction.followup.send(
+                f"Nothing to migrate for `{system.league}` — no real Discord IDs found."
+            )
+            return
+
+        def _apply():
+            for table, column, surrogate, key_col, key_val in updates:
+                _update_column(elo_sql, table, column, surrogate, key_col, key_val)
+
+        try:
+            await asyncio.to_thread(_apply)
+        except Exception as exc:  # noqa: BLE001 - surface the reason to the commish
+            log.exception("migrate: apply failed")
+            await interaction.followup.send(f"Migration write failed: `{exc}`")
+            return
+        servers_migrated = sum(1 for u in updates if u[0] == "dim_league")
+        await interaction.followup.send(
+            f"Migrated `{system.league}`: anonymized {servers_migrated} server id "
+            f"and {managers_migrated} manager discord id(s)."
         )
 
 
