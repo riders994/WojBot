@@ -16,8 +16,26 @@ rather than opening its own — same database, one connection. Because that
 connection is shared outside :class:`~wojbot.core.sql.SqlService`'s lock, the
 mutating commands here defer and run one operation at a time.
 
-Tiering: read-only ``/commish leagues|status`` need admin/privileged access;
-the mutating ``/commish load|sync|publish|dump`` are commissioner-only.
+Tiering: read-only ``/commish leagues|status|season list`` need admin/privileged
+access; the mutating ``/commish load|sync|publish|dump`` are commissioner-only.
+
+The ``/commish season`` subgroup owns the league's seasons — its league-years.
+``add`` registers one more (the platform id, scraped on the spot, which is what
+validates it) and writes it back to the league's ``ratings_*.yml``; ``current``
+settles which season the commands fall back to when none is named; ``platform``
+records which platform a season was played on; ``list`` shows what is on file. A
+season only reaches the database on the next ``sync``/``publish``, since
+publishing re-reads the config and syncs the dims before it writes any ratings.
+
+Moving the league to another platform is a config edit plus ``/commish load``,
+which builds a fresh :class:`EloSystem` — and so a fresh scraper — off the
+league's ``platform``. The dims key an account by ``(platform, account id)`` and
+read the platform *per season*, defaulting to the league's, so the move mints a
+``dim_manager_platform`` row (and a manager behind it) for each account on the
+new platform. That is only correct for the seasons actually played there: an
+unpinned past season follows the league to the new platform and has its accounts
+re-read as new ones. ``/commish season platform`` pins history first; ``add``
+pins each season as it goes.
 
 The ``/commish db`` subgroup edits the SQL dimension tables directly. The
 intended onboarding order for an existing SQL league is: ``migrate`` (adopt the
@@ -75,6 +93,12 @@ class Commish(commands.Cog):
     db = app_commands.Group(
         name="db",
         description="Edit the league/manager tables in the database.",
+        parent=group,
+    )
+    # Nested subgroup: /commish season <...> — the league's seasons (league-years).
+    season = app_commands.Group(
+        name="season",
+        description="Add and manage the league's seasons.",
         parent=group,
     )
 
@@ -256,6 +280,335 @@ class Commish(commands.Cog):
             return
         sections = ", ".join(f"`{k}`" for k in written) or "(nothing)"
         await interaction.followup.send(f"Backed up configs: {sections}.")
+
+    # --- /commish season: the league's seasons (league-years) ------------
+
+    async def _league(self, interaction: discord.Interaction):
+        """Resolve (building if needed) this guild's EloLeague, loaded.
+
+        Returns ``(system, league)``, or ``(None, None)`` after reporting why
+        not. Loading only reads the config — the scrape is the caller's to do.
+        """
+        try:
+            system = await get_or_build(self.bot, interaction.guild_id)
+        except Exception as exc:  # noqa: BLE001 - surface the reason to the commish
+            log.exception("Failed to resolve Elo system")
+            await interaction.followup.send(f"Couldn't load this server's league: `{exc}`")
+            return None, None
+        league = system.elo_league
+        if league is None:
+            await interaction.followup.send(
+                "That league has no ratings config — check `resources/configs`."
+            )
+            return None, None
+        if not league.loaded:
+            league.load()
+        return system, league
+
+    @season.command(name="list", description="List the seasons configured for this league.")
+    @is_privileged()
+    async def season_list(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        system, league = await self._league(interaction)
+        if league is None:
+            return
+        if not league.seasons:
+            await interaction.followup.send(
+                f"`{system.league}` has no seasons configured — add one with "
+                "`/commish season add`."
+            )
+            return
+
+        lines = []
+        for year in sorted(league.seasons):
+            config = league.seasons[year]
+            tags = []
+            if year == league.current_sports_year:
+                tags.append("current")
+            if config.get("current_season_length") is None:
+                # No length on file means the season has never been scraped, so
+                # it has no members and nothing can be rated for it yet.
+                tags.append("not scraped")
+            platform = config.get("platform")
+            if platform is None:
+                # Nothing pinned, so this season answers to whatever the league
+                # currently says — which moves under it if the league moves.
+                tags.append(f"inherits `{league.platform}`")
+                platform = league.platform
+            suffix = f" — {', '.join(tags)}" if tags else ""
+            members = len(config.get("league_members") or {})
+            lines.append(
+                f"• **{year}** `{config.get('league_id')}` on `{platform}` · "
+                f"{members} manager(s) · {config.get('current_season_length', 0)} week(s){suffix}"
+            )
+        name = (system.ratings_config or {}).get("league_name", system.league)
+        unpinned = [y for y in league.seasons if league.seasons[y].get("platform") is None]
+        if unpinned:
+            lines.append(
+                f"\n{len(unpinned)} season(s) name no platform of their own. Pin them with "
+                "`/commish season platform` before moving the league to another platform, "
+                "or they follow it and their managers are re-read as new accounts."
+            )
+        await interaction.followup.send(
+            _clip(f"**{name} — seasons**\n" + "\n".join(lines))
+        )
+
+    @season.command(name="add", description="Add a new season (league-year) to this league.")
+    @app_commands.describe(
+        year="The season's year, e.g. 2026",
+        league_id="The league's id on the platform for that season",
+        sync="Also register the season's managers & teams in the database",
+        overwrite="Replace the season if it is already configured",
+    )
+    @is_commissioner()
+    async def season_add(
+        self,
+        interaction: discord.Interaction,
+        year: int,
+        league_id: str,
+        sync: bool = False,
+        overwrite: bool = False,
+    ) -> None:
+        await interaction.response.defer(ephemeral=True)
+        league_id = league_id.strip()
+        if not league_id:
+            await interaction.followup.send("A platform league id is required.")
+            return
+        system, league = await self._league(interaction)
+        if league is None:
+            return
+        if year in league.seasons and not overwrite:
+            await interaction.followup.send(
+                f"Season {year} is already configured as "
+                f"`{league.seasons[year].get('league_id')}`. Pass `overwrite: True` to "
+                "replace it — its members would be re-read from the platform."
+            )
+            return
+        if sync and system.elo_sql is None:
+            await interaction.followup.send(
+                "No SQL backend is configured — check `sql_config.yml`, or add the "
+                "season without `sync`."
+            )
+            return
+
+        def _work():
+            # add_season registers the season and then scrapes it, which is what
+            # proves the id is real — so a bad one fails here rather than at the
+            # next publish. A failed scrape leaves the season half-registered,
+            # so it is put back the way it was before the error travels on.
+            previous = league.seasons.get(year)
+            # add_season scrapes through add_league, which skips a year it has
+            # already built. Replacing a season would then keep the old scrape
+            # and leave the new id unread, so the cached one goes first.
+            league.remove_league(year)
+            try:
+                # Pin the platform this season is played on. The dims read it
+                # per season (falling back to the league's), so pinning it now
+                # is what keeps this season attributed to the platform it was
+                # actually played on if the league later moves to another.
+                season_config = {"league_id": league_id, "platform": league.platform}
+                if not league.add_season(season_config, year, league=True):
+                    raise ValueError(
+                        f"`{league_id}` isn't a usable season for a "
+                        f"{league.platform} league."
+                    )
+            except Exception:
+                league.remove_league(year)
+                if previous is None:
+                    league.seasons.pop(year, None)
+                else:
+                    league.seasons[year] = previous
+                raise
+            # dump() folds the scraped season into system.ratings_config (the
+            # same dict), which write_configs then puts on disk.
+            league.dump()
+            system.write_configs("ratings")
+            # A FrameManager built by an earlier command captured the seasons
+            # dict as it was, and is only ever rebuilt when there is none — so
+            # it would not know this season exists, and rating it would fail
+            # with "Unknown season". Point it at the live one, which is what
+            # dump() just made config['seasons'] and what a fresh manager would
+            # take. Repointing rather than dropping keeps any ratings already
+            # loaded or run in this process.
+            if league.frame_manager is not None:
+                league.frame_manager.config = league.seasons
+            if sync:
+                # Already scraped just now, so don't do it again for every season.
+                system.sync_dims(years=[year], scrape=False)
+            return league.seasons[year]
+
+        try:
+            config = await asyncio.to_thread(_work)
+        except Exception as exc:  # noqa: BLE001 - surface the reason to the commish
+            log.exception("season add failed")
+            await interaction.followup.send(f"Couldn't add season {year}: `{exc}`")
+            return
+        self.bot.leagues.invalidate(interaction.guild_id)
+
+        members = config.get("league_members") or {}
+        lines = [
+            f"Added season **{year}** to `{system.league}` (`{league_id}`).",
+            f"• Name on {league.platform}: **{config.get('league_name') or '—'}**",
+            f"• Scored weeks: {config.get('current_season_length', 0)}",
+            f"• Playoffs start: week {config.get('playoff_start', '—')}",
+            f"• Managers: {len(members)}",
+        ]
+        roster = [
+            str(info.get("curr_name") or info.get("short_name") or member_id)
+            for member_id, info in list(members.items())[:25]
+        ]
+        if roster:
+            more = f" …and {len(members) - 25} more" if len(members) > 25 else ""
+            lines.append("  " + ", ".join(roster) + more)
+        if not sync:
+            lines.append(
+                "\nIts managers and teams reach the database on the next "
+                "`/commish publish` (or now, with `/commish sync`)."
+            )
+        if year > (league.current_sports_year or 0):
+            lines.append(
+                f"To make {year} the season the commands default to, run "
+                f"`/commish season current`."
+            )
+        await interaction.followup.send(_clip("\n".join(lines)))
+
+    @season.command(
+        name="platform", description="Record which platform a season was played on."
+    )
+    @app_commands.describe(
+        platform="Platform name (defaults to the league's current one)",
+        year="Season to pin (leave blank to pin every season that names none)",
+    )
+    @is_commissioner()
+    async def season_platform(
+        self,
+        interaction: discord.Interaction,
+        platform: str | None = None,
+        year: int | None = None,
+    ) -> None:
+        """Pin a season's platform, so a later league-wide move leaves it alone.
+
+        The dims key a manager by ``(platform, account id)`` and read the
+        platform per season, falling back to the league's. A league that moves
+        therefore drags every unpinned season with it: past seasons' accounts
+        are re-read under the new platform, minting a second manager for each
+        of them. Pinning history first is what stops that — after which
+        changing the league's own ``platform`` and reloading (which builds a
+        fresh EloSystem, and so a fresh scraper) only affects seasons from the
+        move onwards.
+        """
+        from elo_system.tools.elo_league import LEAGUE_CLASSES
+
+        await interaction.response.defer(ephemeral=True)
+        system, league = await self._league(interaction)
+        if league is None:
+            return
+        target = (platform or league.platform or "").strip()
+        if not target:
+            await interaction.followup.send(
+                "This league names no platform, so there is nothing to default to — "
+                "pass one explicitly."
+            )
+            return
+        if year is not None and year not in league.seasons:
+            await interaction.followup.send(
+                f"Season {year} isn't configured. Available: "
+                + (", ".join(str(y) for y in sorted(league.seasons)) or "none")
+            )
+            return
+        if year is not None:
+            years = [year]
+        else:
+            years = [y for y in sorted(league.seasons) if league.seasons[y].get("platform") is None]
+            if not years:
+                await interaction.followup.send(
+                    "Every season already names the platform it was played on."
+                )
+                return
+
+        def _work():
+            for season_year in years:
+                league.seasons[season_year]["platform"] = target
+            league.dump()
+            system.write_configs("ratings")
+
+        try:
+            await asyncio.to_thread(_work)
+        except Exception as exc:  # noqa: BLE001 - surface the reason to the commish
+            log.exception("season platform failed")
+            await interaction.followup.send(f"Couldn't pin the platform: `{exc}`")
+            return
+        self.bot.leagues.invalidate(interaction.guild_id)
+
+        listed = ", ".join(str(y) for y in years)
+        lines = [f"Pinned season(s) **{listed}** to `{target}`."]
+        if target not in LEAGUE_CLASSES:
+            # Fine for a league's past — the dims only need the name — but it
+            # cannot be scraped, so say so rather than let a typo pass quietly.
+            lines.append(
+                f"⚠️ `{target}` isn't a platform the scraper knows "
+                f"({', '.join(sorted(LEAGUE_CLASSES))}), so those seasons can't be "
+                "re-scraped. That is expected for a platform the league has left — "
+                "but check the spelling."
+            )
+        lines.append(
+            "Their managers stay filed under that platform, so moving the league "
+            "elsewhere now only creates accounts for the seasons that follow."
+        )
+        await interaction.followup.send("\n".join(lines))
+
+    @season.command(
+        name="current", description="Set which season this league's commands default to."
+    )
+    @app_commands.describe(
+        year="The season to make current (leave blank for the latest configured)"
+    )
+    @is_commissioner()
+    async def season_current(
+        self, interaction: discord.Interaction, year: int | None = None
+    ) -> None:
+        await interaction.response.defer(ephemeral=True)
+        system, league = await self._league(interaction)
+        if league is None:
+            return
+        if not league.seasons:
+            await interaction.followup.send(
+                f"`{system.league}` has no seasons configured — add one with "
+                "`/commish season add`."
+            )
+            return
+        reset = year is None
+        target = max(league.seasons) if reset else year
+        if target not in league.seasons:
+            await interaction.followup.send(
+                f"Season {target} isn't configured. Available: "
+                + ", ".join(str(y) for y in sorted(league.seasons))
+            )
+            return
+        previous = league.current_sports_year
+
+        def _work():
+            # current_sports_year is what the run/publish pipelines fall back to;
+            # current_season is which season's League object gets loaded. A
+            # commissioner means both by "the current season", so both move.
+            league.current_sports_year = target
+            league.current_season = target
+            league.dump()
+            system.write_configs("ratings")
+
+        try:
+            await asyncio.to_thread(_work)
+        except Exception as exc:  # noqa: BLE001 - surface the reason to the commish
+            log.exception("season current failed")
+            await interaction.followup.send(f"Couldn't set the current season: `{exc}`")
+            return
+        self.bot.leagues.invalidate(interaction.guild_id)
+        how = " (the latest configured)" if reset else ""
+        was = f" It was {previous}." if previous != target else ""
+        await interaction.followup.send(
+            f"`{system.league}` now defaults to season **{target}**{how}.{was}\n"
+            "`/elo run` and `/commish publish` use it when no season is given."
+        )
 
     # --- /commish db: direct SQL dim edits -------------------------------
 
