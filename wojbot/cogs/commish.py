@@ -31,20 +31,16 @@ from discord import app_commands
 from discord.ext import commands
 
 from ..core.checks import is_commissioner, is_privileged
-from ..core.config import PROJECT_ROOT
+from ..core.elo import (
+    ELO_SYS_CONFIG,
+    GUILD_LEAGUE_KEY,
+    build_system,
+    cached_system,
+    configured_league,
+    runtime_key,
+)
 
 log = logging.getLogger(__name__)
-
-ELO_CONFIG_DIR = PROJECT_ROOT / "resources" / "configs"
-ELO_SYS_CONFIG = ELO_CONFIG_DIR / "sys_config.yml"
-
-# Per-guild config key: which configured league this server drives.
-GUILD_LEAGUE_KEY = "elo_league"
-
-
-def _runtime_key(league: str | None) -> str:
-    """Runtime registry key for a league's EloSystem."""
-    return f"elo:{league or '<default>'}"
 
 
 class Commish(commands.Cog):
@@ -59,42 +55,16 @@ class Commish(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    # --- league selection / construction ---------------------------------
+    # --- league selection / construction (shared: wojbot.core.elo) --------
 
     def _configured_league(self, guild_id: int | None) -> str | None:
-        """The league key bound to this guild, if any."""
-        if guild_id is None:
-            return None
-        return self.bot.configs.get_guild(guild_id).get(GUILD_LEAGUE_KEY)
+        return configured_league(self.bot, guild_id)
 
     async def _build_system(self, league: str | None):
-        """Construct an EloSystem for ``league`` and load its configs (off-thread).
-
-        Passing ``league=None`` lets EloSystem fall back to ``default_league`` (or
-        raise if the choice is ambiguous). If the bot has a live DB connection,
-        the Elo SQL backend is rebuilt to reuse it instead of opening its own.
-        """
-        from elo_system.elo_system import EloSystem
-
-        sql = getattr(self.bot, "sql", None)
-        connector = sql.connection if sql is not None else None
-
-        def _build():
-            system = EloSystem(str(ELO_SYS_CONFIG), league)
-            system.load_configs()
-            if connector is not None and system.sql_config:
-                # Reuse the bot's warehouse connection (same DB) rather than
-                # letting EloSQL open a second one.
-                system.set_elo_sql(system.sql_config, connector)
-                system.set_reader(system.reader_key)
-                system.set_writer(system.writer_key)
-            return system
-
-        return await asyncio.to_thread(_build)
+        return await build_system(self.bot, league)
 
     def _loaded_system(self, guild_id: int | None):
-        """The EloSystem previously loaded for this guild's league, or None."""
-        return self.bot.runtime.get(_runtime_key(self._configured_league(guild_id)))
+        return cached_system(self.bot, guild_id)
 
     def _describe(self, system, *, loaded: bool = False) -> str:
         league = system.league or "(default)"
@@ -173,7 +143,7 @@ class Commish(commands.Cog):
             await interaction.followup.send(f"Couldn't load league: `{exc}`")
             return
         concrete = system.league
-        self.bot.runtime.set(_runtime_key(concrete), system)
+        self.bot.runtime.set(runtime_key(concrete), system)
         if concrete:
             self.bot.configs.set_guild(interaction.guild_id, {GUILD_LEAGUE_KEY: concrete})
         await interaction.followup.send(self._describe(system, loaded=True))
