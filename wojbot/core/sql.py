@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from rv_pytools.sqltools import Manager
@@ -62,11 +63,61 @@ class SqlService:
 
         ``kwargs`` fill ``{}``-style placeholders in the query text (rv_pytools'
         contract) — pass only validated/typed values (e.g. an int ``league_id``).
+        Anything a user typed belongs in :meth:`run` instead.
         """
         async with self._lock:
             return await asyncio.to_thread(
                 self._manager.execute_query, name, connector or self._default, **kwargs
             )
+
+    async def run(
+        self,
+        name: str,
+        params: Sequence | Mapping[str, object] | None = None,
+        connector: str | None = None,
+    ) -> list:
+        """Run a registered query with its ``%s`` placeholders *bound*.
+
+        The difference from :meth:`execute` is who fills the placeholders.
+        rv_pytools interpolates with ``str.format`` before the statement ever
+        reaches the driver, so a value carrying a quote rewrites the query —
+        fine for an int the bot computed, not for text somebody typed into a
+        Discord modal. Here psycopg2 binds the values, so they can only ever be
+        values.
+
+        Commits, and returns rows when the statement produced any (an ``INSERT
+        ... RETURNING`` does; a bare one doesn't).
+        """
+        conn = self._manager.connections.get(connector or self._default)
+        if conn is None:
+            raise ConfigError("No SQL connection is open (try /sql reconnect).")
+        try:
+            query = self._manager.queries[name]
+        except KeyError:
+            # run_new_files skips any file it has already logged as RUN, so an
+            # edited or newly added query stays invisible until the registry
+            # state is cleared. Say that, rather than raising a bare KeyError.
+            raise ConfigError(
+                f"No query named {name!r} is registered. If sql/queries/{name}.sql "
+                "exists, delete sql/manager.log.json and sql/queries/_queries.json "
+                "and restart to re-register it."
+            ) from None
+
+        def _work() -> list:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(query, params)
+                    rows = cur.fetchall() if cur.description is not None else []
+                conn.commit()
+                return rows
+            except Exception:
+                # Leave the connection usable: an aborted transaction fails
+                # every later statement on it until someone rolls back.
+                conn.rollback()
+                raise
+
+        async with self._lock:
+            return await asyncio.to_thread(_work)
 
     async def status(self) -> dict[str, bool]:
         """Return ``{connection_name: is_open}`` for every held connection."""
