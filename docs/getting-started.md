@@ -1,5 +1,8 @@
 # Getting started
 
+> Moving an existing install to a Raspberry Pi? See
+> [deploying-to-a-pi.md](deploying-to-a-pi.md).
+
 How to stand WojBot up and bring a league onto it. If you run more than one
 league, each has its own Discord server and you do the [per-server
 setup](#2-set-up-each-league-server) once in each.
