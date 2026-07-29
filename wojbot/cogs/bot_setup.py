@@ -52,6 +52,7 @@ from ..core.elo import (
     configured_league,
     runtime_key,
 )
+from ..core.rumor import RUMOR_CHANNEL_KEY
 
 log = logging.getLogger(__name__)
 
@@ -88,6 +89,19 @@ def configured_leagues() -> list[str]:
     return sorted(config.get("ratings_configs", {}))
 
 
+def describe_channel(configs, guild: discord.Guild, key: str) -> str:
+    """``#woj-wire`` — the configured channel, or why it isn't usable.
+
+    A stored id can outlive the channel it named, and the result reads the same
+    as "never set" unless the difference is spelled out.
+    """
+    channel_id = configs.get_guild(guild.id).get(key)
+    if channel_id is None:
+        return "not set"
+    channel = guild.get_channel(channel_id)
+    return channel.mention if channel else f"`{channel_id}` (no such channel here)"
+
+
 def _role_status(guild: discord.Guild, names) -> tuple[list[str], list[str]]:
     """Split configured role names into those the guild has and those it lacks.
 
@@ -100,7 +114,7 @@ def _role_status(guild: discord.Guild, names) -> tuple[list[str], list[str]]:
 
 
 class SetupWizard(discord.ui.View):
-    """Four steps over one message: roles, league, dad jokes, then hand-off.
+    """Four steps over one message: roles, league, rumor channel, dad jokes.
 
     Each step rebuilds the view's children rather than sending a new message,
     so the whole thing stays a single ephemeral reply the admin can dismiss.
@@ -131,19 +145,27 @@ class SetupWizard(discord.ui.View):
 
     # --- rendering ---------------------------------------------------------
 
+    STEPS = ("Privileged roles", "League", "Rumor channel", "Dad jokes", "Setup complete")
+
     def _render(self) -> None:
         self.clear_items()
-        [self._step_roles, self._step_league, self._step_jokes, self._step_done][self.step]()
+        [
+            self._step_roles,
+            self._step_league,
+            self._step_rumors,
+            self._step_jokes,
+            self._step_done,
+        ][self.step]()
 
     def _embed(self) -> discord.Embed:
-        titles = ("Privileged roles", "League", "Dad jokes", "Setup complete")
+        last = len(self.STEPS) - 1
         embed = discord.Embed(
-            title=f"WojBot setup — {titles[self.step]}",
+            title=f"WojBot setup — {self.STEPS[self.step]}",
             description=self._body(),
             colour=discord.Colour.blurple(),
         )
-        if self.step < 3:
-            embed.set_footer(text=f"Step {self.step + 1} of 3")
+        if self.step < last:
+            embed.set_footer(text=f"Step {self.step + 1} of {last}")
         return embed
 
     def _body(self) -> str:
@@ -168,6 +190,13 @@ class SetupWizard(discord.ui.View):
                 return f"{current}\n\nNo leagues are configured in `sys_config.yml`."
             return f"{current}\n\nPick the Elo league this server drives."
         if self.step == 2:
+            current = describe_channel(self.bot.configs, self.guild, RUMOR_CHANNEL_KEY)
+            return (
+                f"Rumors post to {current}.\n\nPick the channel `/rumor report` "
+                "announces to. Without one, rumors are still recorded — they just "
+                "go out to nobody."
+            )
+        if self.step == 3:
             current = describe_setting(self.bot.configs, self.guild.id, DAD_JOKE_KEY)
             return (
                 f"Dad jokes are **{current}**.\n\nOn or off makes it this server's "
@@ -241,7 +270,32 @@ class SetupWizard(discord.ui.View):
             self.add_item(select)
         self.add_item(_NextButton(self, "Next ›"))
 
-    # --- step 3: dad jokes -------------------------------------------------
+    # --- step 3: rumor channel ---------------------------------------------
+
+    def _step_rumors(self) -> None:
+        select = discord.ui.ChannelSelect(
+            placeholder="Channel for reported rumors",
+            channel_types=[discord.ChannelType.text],
+            min_values=0,
+            max_values=1,
+        )
+
+        async def callback(interaction: discord.Interaction, select=select):
+            if not select.values:
+                self._render()
+                await interaction.response.edit_message(embed=self._embed(), view=self)
+                return
+            channel = select.values[0]
+            self.bot.configs.set_guild(self.guild.id, {RUMOR_CHANNEL_KEY: channel.id})
+            self.done.append(f"Rumors will post to {channel.mention}")
+            self._render()
+            await interaction.response.edit_message(embed=self._embed(), view=self)
+
+        select.callback = callback
+        self.add_item(select)
+        self.add_item(_NextButton(self, "Next ›"))
+
+    # --- step 4: dad jokes -------------------------------------------------
 
     def _step_jokes(self) -> None:
         for label, value, style in (
@@ -336,6 +390,14 @@ class BotSetup(commands.Cog):
                     )
                 if not any(s.get("league_members") for s in seasons.values()):
                     steps.append("No rosters scraped yet — `/commish sync`")
+        channel_id = config.get(RUMOR_CHANNEL_KEY)
+        if channel_id is None:
+            steps.append("No rumor channel set — `/setup rumorchannel`")
+        elif guild.get_channel(channel_id) is None:
+            steps.append(
+                f"The rumor channel (`{channel_id}`) no longer exists — "
+                "`/setup rumorchannel`"
+            )
         sql = getattr(self.bot, "sql", None)
         if sql is None:
             steps.append("No database service — check `SQL_CONN_URI`")
@@ -361,6 +423,9 @@ class BotSetup(commands.Cog):
         league = configured_league(self.bot, guild.id)
         lines.append(f"**League:** `{league}`" if league else "**League:** not bound")
         lines.append(
+            f"**Rumor channel:** {describe_channel(self.bot.configs, guild, RUMOR_CHANNEL_KEY)}"
+        )
+        lines.append(
             f"**Dad jokes:** {describe_setting(self.bot.configs, guild.id, DAD_JOKE_KEY)}"
         )
 
@@ -371,9 +436,31 @@ class BotSetup(commands.Cog):
         )
         embed.set_footer(
             text="Roles: /verify · dad jokes: /dadjokes · league: /commish · "
-                 "or walk through it with /setup wizard"
+                 "rumors: /setup rumorchannel · or walk through it with /setup wizard"
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @group.command(
+        name="rumorchannel", description="Set the channel reported rumors post to."
+    )
+    @app_commands.describe(channel="Where /rumor report announces to")
+    @is_privileged()
+    async def rumorchannel(
+        self, interaction: discord.Interaction, channel: discord.TextChannel
+    ) -> None:
+        self.bot.configs.set_guild(interaction.guild_id, {RUMOR_CHANNEL_KEY: channel.id})
+        # Say up front if the bot can't actually post there: the setting saves
+        # either way, and the failure would otherwise only surface later, to
+        # whoever reported the first rumor.
+        allowed = channel.permissions_for(interaction.guild.me).send_messages
+        warning = (
+            "" if allowed
+            else f"\n\n⚠️ I can't send messages in {channel.mention} — "
+                 "rumors will be recorded but not announced until that's fixed."
+        )
+        await interaction.response.send_message(
+            f"Reported rumors will post to {channel.mention}.{warning}", ephemeral=True
+        )
 
     @group.command(name="dadjokes", description="Turn dad jokes on or off for this server.")
     @app_commands.describe(state="On, off, or follow whatever the bot-wide default is")

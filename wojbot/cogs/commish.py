@@ -77,6 +77,7 @@ from ..core.elo import (
     get_or_build,
     runtime_key,
 )
+from ..core.format import clip as _clip
 
 log = logging.getLogger(__name__)
 
@@ -1001,11 +1002,6 @@ def _manager_identity(rows, manager_id) -> str | None:
             platform = _platform_str(platforms)
             return f"**{name}**" + (f" · {platform}" if platform != "—" else "")
     return None
-
-
-def _clip(text: str, limit: int = 1900) -> str:
-    """Keep a message under Discord's 2000-char limit."""
-    return text if len(text) <= limit else text[:limit] + "\n… (truncated)"
 
 
 def _manager_rows(elo_sql, league_id=None) -> list:
