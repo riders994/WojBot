@@ -74,16 +74,24 @@ class WojBotV2(commands.Bot):
                 # One bad cog shouldn't stop the whole bot from starting.
                 log.exception("Failed to load extension %s", extension)
 
+        # Global first: this is what reaches every server the bot is in, and it
+        # is the only sync that does. It can take up to ~an hour to propagate.
+        synced = await self.tree.sync()
+        log.info("Synced %d global command(s)", len(synced))
+
+        # Then the dev guild, if one is configured, so changes show there at
+        # once instead of waiting on that hour. A guild copy of a command the
+        # global set also has is a second registration, not a replacement, so
+        # this is worth setting only for a guild actively being developed
+        # against -- see DISCORD_GUILD_ID in .env.example.
         if self.settings.guild_id is not None:
             guild = discord.Object(id=self.settings.guild_id)
-            # Copy global commands to the dev guild for instant availability;
-            # global sync can take up to ~1 hour to propagate.
             self.tree.copy_global_to(guild=guild)
-            synced = await self.tree.sync(guild=guild)
-            log.info("Synced %d command(s) to guild %s", len(synced), self.settings.guild_id)
-        else:
-            synced = await self.tree.sync()
-            log.info("Synced %d global command(s)", len(synced))
+            local = await self.tree.sync(guild=guild)
+            log.info(
+                "Synced %d command(s) to dev guild %s",
+                len(local), self.settings.guild_id,
+            )
 
     async def on_ready(self) -> None:
         log.info("Logged in as %s (%s)", self.user, self.user.id)
