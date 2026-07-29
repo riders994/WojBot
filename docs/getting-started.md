@@ -26,8 +26,20 @@ You need three things on the machine running the bot:
 | **The Message Content intent** | Same page, under *Privileged Gateway Intents*. The dad-joke listener reads message text and the bot won't start without it. |
 | **A database** | Postgres, with the `fantasy_sports` schema built from the [`leagueSQL`](https://github.com/riders994) repo. Without one the bot still runs, but `/rumor` and everything under `/commish db` won't. |
 
-Copy `.env.example` to `.env` and fill in `DISCORD_TOKEN` and `SQL_CONN_URI`.
-`.env` is gitignored.
+Copy `.env.example` to `.env` and fill in `DISCORD_TOKEN`. `.env` is gitignored.
+
+For the database, give the connection **either** as a whole string in
+`SQL_CONN_URI`, **or** as the discrete `SQL_HOST` / `SQL_PORT` / `SQL_USER` /
+`SQL_PASSWORD` / `SQL_DBNAME` fields. `SQL_CONN_URI` is checked first and wins
+while it's set, so comment it out to use the fields.
+
+Prefer the fields unless you need something only a URI can carry (`sslmode`, a
+connect timeout, a socket path) — the password is escaped for you, so it can
+contain `:` `/` `@` `?` or `#` without you percent-encoding it by hand. Setting
+some of `SQL_HOST`/`SQL_USER`/`SQL_DBNAME` but not all is an error rather than a
+silent fallback, so a typo can't quietly leave you with no database.
+
+Leave the whole section blank to run without one.
 
 If you're actively developing, also set `DISCORD_GUILD_ID` to one server —
 commands sync globally, which reaches everywhere but takes about an hour to
