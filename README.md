@@ -30,8 +30,8 @@ The short version, once the bot is running and invited:
 ## Running it
 
 ```bash
-cp .env.example .env    # fill in DISCORD_TOKEN and SQL_CONN_URI
-pip install -e .
+cp .env.example .env    # fill in DISCORD_TOKEN and the database settings
+pip install -e .        # or: pip install -r requirements.lock && pip install -e . --no-deps
 wojbot
 ```
 
@@ -45,9 +45,10 @@ own database role only needs DML.
 ## Layout
 
 ```
-wojbot/cogs/     one cog per command group; discovered and loaded automatically
-wojbot/core/     config, permissions, database, and the rumor domain rules
-sql/queries/     named queries, registered at startup
-resources/       league configs and generated state
-tests/           pytest; `pip install -e .[dev]` gets the runner
+wojbot/cogs/       one cog per command group; discovered and loaded automatically
+wojbot/core/       config, permissions, database, and the rumor domain rules
+sql/queries/       named queries, registered at startup
+resources/         league configs and generated state
+tests/             pytest; `pip install -e .[dev]` gets the runner
+requirements.lock  pinned runtime deps for deployments; regenerate with uv
 ```

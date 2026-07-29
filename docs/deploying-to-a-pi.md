@@ -143,12 +143,32 @@ correct warehouse; the dump is still the only source for the actual data.
 
 ```bash
 git clone git@github.com:riders994/WojBot.git && cd WojBot
-python3 -m venv .venv && .venv/bin/pip install -e .
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.lock
+.venv/bin/pip install -e . --no-deps
 ```
 
-Everything resolves from public PyPI — `rv-pytools`, `elo-system` and `sleeper`
-are all published, so there is no private index to set up. **Do not copy
-`.venv/`** from the workstation; it is x86_64.
+**Install from `requirements.lock`, not from `pyproject.toml`.** The constraints
+in `pyproject.toml` are ranges, so a plain `pip install -e .` resolves them
+against whatever is newest the day you run it — and the whole point of the
+exercise is that the Pi runs what you've been testing. The lock pins all 24
+runtime packages, including the transitive ones nothing in `pyproject.toml`
+constrains at all (`numpy`, `pandas`, `aiohttp`, `yarl`). `--no-deps` on the
+second line is what stops pip resolving the ranges again on top.
+
+The lock records versions, not architectures, and every one of these publishes
+an aarch64 wheel, so a lock generated on the workstation installs fine on the
+Pi. Everything comes from public PyPI — `rv-pytools`, `elo-system` and `sleeper`
+are all published, so there is no private index to set up.
+
+**Do not copy `.venv/`** from the workstation; it is x86_64.
+
+To regenerate the lock after changing a dependency (on the workstation, then
+commit it):
+
+```bash
+uv pip compile pyproject.toml -o requirements.lock
+```
 
 ## 5. Copy the state the repo doesn't carry
 

@@ -53,9 +53,20 @@ so that server can end up listing every command twice.
 Then:
 
 ```bash
-pip install -e .
+pip install -e .          # development: resolves the ranges in pyproject.toml
 wojbot
 ```
+
+For a deployment you want the pinned set instead, so the machine runs what was
+actually tested:
+
+```bash
+pip install -r requirements.lock
+pip install -e . --no-deps
+```
+
+Regenerate the lock with `uv pip compile pyproject.toml -o requirements.lock`
+after changing a dependency, and commit it.
 
 ## 1. Invite the bot
 
