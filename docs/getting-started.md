@@ -209,6 +209,12 @@ Manage them with `/verify add tier:… role:@Role` and `/verify remove`.
 **"You aren't linked to a manager yet"** — nobody ran `/commish db linkuser` for
 that user. See [2c](#2c-link-the-managers).
 
+**"You don't have a team in any league this season"** — they're linked, but no
+team in the league's current season is theirs. Only the current season counts:
+somebody who left after last year can't report, and a league they've left is no
+longer one of the options when they report from a DM. Run `/commish sync` if the
+season's rosters were never scraped.
+
 **"This server isn't linked to a league"** — run `/commish db migrate` (or
 `/commish db link` if the league is already adopted elsewhere).
 

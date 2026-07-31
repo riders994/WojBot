@@ -368,7 +368,12 @@ async def league_for_guild(bot, guild_id: int) -> League | None:
 
 
 async def leagues_for_manager(bot, manager_id: int) -> list[League]:
-    """Every league this manager plays in."""
+    """Every league this manager plays in *this season*.
+
+    Leagues they used to be in are left out: there is nothing to report in one,
+    and offering it means asking somebody to choose between the league they play
+    in and one they left.
+    """
     rows = await bot.sql.run("read_manager_leagues", {"manager_id": manager_id})
     return [_league(bot, league_id, name, stored) for league_id, name, stored in rows]
 
@@ -380,9 +385,11 @@ async def current_season(bot, league: League) -> int | None:
 
 
 async def resolve_reporter(bot, manager_id: int, league: League) -> Reporter | None:
-    """Fill in a manager's team and display name for a league's latest season.
+    """Fill in a manager's team and display name for a league's current season.
 
-    None means they have no team in that league -- nothing to report as.
+    None means they have no team in that league this season -- nothing to report
+    as. A season they *used* to have a team in doesn't count: the rumor would be
+    stamped with a season that is over, spoken for a club somebody else runs now.
     """
     rows = await bot.sql.run(
         "read_manager_season", {"manager_id": manager_id, "league_id": league.id}
