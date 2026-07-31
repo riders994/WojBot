@@ -32,9 +32,10 @@ log = logging.getLogger(__name__)
 
 WIZARD_TIMEOUT = 300.0
 DEFAULT_RECENT = 5
-# Discord's own ceiling on a paragraph TextInput is 4000; a rumor that long
-# would not fit an embed alongside its attribution anyway.
-MAX_RUMOR_LENGTH = 1000
+# The cap itself lives in core.rumor, which enforces it on the way to the
+# database. Setting it on the TextInput too just means the reporter finds out
+# while they are still typing rather than at the review step.
+MAX_RUMOR_LENGTH = rumors.MAX_RUMOR_LENGTH
 
 # Release types climb from level 0 (idle talk) to 5 (the league speaking), and
 # the colour climbs with them so the weight of one reads before the words do.
@@ -96,8 +97,19 @@ class RumorTextModal(discord.ui.Modal):
         self.add_item(self.entry)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        self.wizard.fills[self.field] = self.entry.value.strip()
-        self.wizard.step += 1
+        text = self.entry.value.strip()
+        # Kept either way, so 'Rewrite it' reopens with what they typed rather
+        # than making them start the paragraph again.
+        self.wizard.fills[self.field] = text
+        try:
+            rumors.check_fill_length(text)
+        except rumors.RumorTooLong as exc:
+            # Only reachable if max_length didn't hold; say so here rather than
+            # letting it fail at the write, two steps later.
+            self.wizard.note = f"⚠️ {exc}"
+        else:
+            self.wizard.note = ""
+            self.wizard.step += 1
         self.wizard._render()
         await interaction.response.edit_message(
             embed=self.wizard._embed(), view=self.wizard

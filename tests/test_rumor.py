@@ -12,9 +12,12 @@ import pytest
 
 from wojbot.core.rumor import (
     COMMISSIONER_SOURCE_ID,
+    MAX_RUMOR_LENGTH,
     ReleaseType,
     RumorForm,
+    RumorTooLong,
     SourceType,
+    check_fill_length,
     fill_fields,
     forms_for,
     is_reportable,
@@ -242,6 +245,28 @@ def test_rendering_does_not_interpret_reporter_text():
     """Whatever a reporter types is content, never a format directive."""
     body = render_form(FREE_FORM, {"rumor": "{team} {manager} {rumor} {0} %s"})
     assert body == '"{team} {manager} {rumor} {0} %s"'
+
+
+def test_a_rumor_at_the_limit_is_accepted():
+    text = "x" * MAX_RUMOR_LENGTH
+    assert check_fill_length(text) == text
+
+
+def test_a_rumor_over_the_limit_is_rejected():
+    with pytest.raises(RumorTooLong):
+        check_fill_length("x" * (MAX_RUMOR_LENGTH + 1))
+
+
+def test_the_length_error_names_both_numbers():
+    """The reporter has to know how much to cut."""
+    with pytest.raises(RumorTooLong, match=rf"{MAX_RUMOR_LENGTH}.*{MAX_RUMOR_LENGTH + 50}"):
+        check_fill_length("x" * (MAX_RUMOR_LENGTH + 50))
+
+
+def test_over_length_text_is_rejected_not_truncated():
+    """Truncating would put words in the reporter's mouth without telling them."""
+    with pytest.raises(RumorTooLong):
+        check_fill_length("We are trading " + "x" * MAX_RUMOR_LENGTH)
 
 
 if __name__ == "__main__":

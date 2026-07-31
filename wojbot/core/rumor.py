@@ -51,6 +51,12 @@ ENABLED_FORM_IDS: tuple[int, ...] = (1,)
 # manager may claim. Gated on the admin_roles tier in the league's server.
 COMMISSIONER_SOURCE_ID = 10
 
+# How much a reporter may type into one fill. Discord's own ceiling on a
+# paragraph TextInput is 4000, and ``rumor_text`` is an unbounded ``varchar``,
+# so this number is the only thing that bounds the column -- it lives here
+# rather than in the cog because the modal is a courtesy and this is the rule.
+MAX_RUMOR_LENGTH = 1000
+
 # Placeholders a source name can carry, and what fills them.
 TEAM_FIELD = "{team}"
 MANAGER_FIELD = "{manager}"
@@ -102,6 +108,23 @@ class RumorForm:
     title: str
     required_fills: tuple[str, ...] = ()
     valid_sources: tuple[int, ...] = ()
+
+
+class RumorTooLong(ValueError):
+    """A fill longer than :data:`MAX_RUMOR_LENGTH`. The message is for the reporter."""
+
+
+def check_fill_length(text: str, *, limit: int = MAX_RUMOR_LENGTH) -> str:
+    """Return ``text`` if it fits, else raise :class:`RumorTooLong`.
+
+    Rejects rather than truncates: a rumor cut off mid-sentence reads as the
+    reporter's own words, and they can't tell it happened.
+    """
+    if len(text) > limit:
+        raise RumorTooLong(
+            f"A rumor can be at most {limit} characters — that one is {len(text)}."
+        )
+    return text
 
 
 def is_reportable(source: SourceType) -> bool:
@@ -392,7 +415,17 @@ async def record_rumor(
     form and source ids are stored too, so the line is rebuilt on the way out
     and a fixed typo in a form's wording reaches every rumor already written in
     it.
+
+    The text is bound by psycopg2 (:meth:`SqlService.run`, never ``execute``),
+    so it can only ever reach the database as a value; the length is checked
+    here because this is the last point before the write, and the modal's
+    ``max_length`` is a client-side courtesy rather than a guarantee.
+
+    Raises:
+        RumorTooLong: if a fill exceeds :data:`MAX_RUMOR_LENGTH`.
     """
+    for value in fills.values():
+        check_fill_length(value)
     rows = await bot.sql.run(
         "write_fact_rumor",
         {
