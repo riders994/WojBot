@@ -21,6 +21,11 @@ privileged roles by ``/verify``, which adds and removes one role at a time, and
 the league binding by ``/commish load``, which loads the league as well as names
 it. Both are reported by ``/setup show`` and set by the wizard.
 
+Not every server that invites the bot runs a league, and the rumor settings are
+the ones that only make sense when it does — see :func:`is_league_server`. The
+wizard skips that step, ``/setup show`` says so rather than listing a channel
+nothing would ever post to, and ``/setup rumorchannel`` declines.
+
 An inherited setting's toggle has three states, not two — on, off, and following
 the bot-wide default. Without the third, the first use of the toggle would
 detach a server from the default permanently.
@@ -52,7 +57,7 @@ from ..core.elo import (
     configured_league,
     runtime_key,
 )
-from ..core.rumor import RUMOR_CHANNEL_KEY
+from ..core.rumor import RUMOR_CHANNEL_KEY, league_for_guild
 
 log = logging.getLogger(__name__)
 
@@ -89,6 +94,38 @@ def configured_leagues() -> list[str]:
     return sorted(config.get("ratings_configs", {}))
 
 
+async def is_league_server(bot, guild_id: int) -> bool:
+    """Whether this server runs a league, and so has rumors worth setting up.
+
+    A server becomes one two ways, and either counts:
+
+    * bot-side, by ``/commish load`` (or the wizard's league step), which names
+      the Elo league this server drives;
+    * warehouse-side, by ``/commish db link``, which writes this server onto the
+      league's ``dim_league`` row. ``/commish db migrate`` does both.
+
+    ``/rumor report`` keys off the warehouse row, so that is the binding that
+    truly decides — but a server bound only bot-side is a league mid-onboarding
+    rather than a stranger, and the config binding is free to read, so it is
+    taken first and the query only runs when it comes up empty.
+
+    A server nobody can vouch for is treated as not a league, the database being
+    down included. That is the safe way round: the rumor settings reappear the
+    moment the binding does, and :meth:`BotSetup.outstanding` reports a dead
+    database alongside, so the omission never has to be guessed at.
+    """
+    if configured_league(bot, guild_id) is not None:
+        return True
+    sql = getattr(bot, "sql", None)
+    if sql is None or sql.connection is None:
+        return False
+    try:
+        return (await league_for_guild(bot, guild_id)) is not None
+    except Exception:  # noqa: BLE001 - setup must still render with the DB sick
+        log.warning("Could not check the league binding for %s", guild_id, exc_info=True)
+        return False
+
+
 def describe_channel(configs, guild: discord.Guild, key: str) -> str:
     """``#woj-wire`` — the configured channel, or why it isn't usable.
 
@@ -114,21 +151,39 @@ def _role_status(guild: discord.Guild, names) -> tuple[list[str], list[str]]:
 
 
 class SetupWizard(discord.ui.View):
-    """Four steps over one message: roles, league, rumor channel, dad jokes.
+    """Roles, league, rumor channel and dad jokes over one message.
 
     Each step rebuilds the view's children rather than sending a new message,
     so the whole thing stays a single ephemeral reply the admin can dismiss.
+
+    Built through :meth:`create` rather than the constructor, because working
+    out whether this server is a league can take a query and a view cannot be
+    built asynchronously.
     """
 
-    def __init__(self, cog: "BotSetup", interaction: discord.Interaction) -> None:
+    def __init__(
+        self, cog: "BotSetup", interaction: discord.Interaction, *, is_league: bool
+    ) -> None:
         super().__init__(timeout=WIZARD_TIMEOUT)
         self.cog = cog
         self.bot = cog.bot
         self.guild = interaction.guild
         self.user = interaction.user
+        self.is_league = is_league
         self.step = 0
         self.done: list[str] = []
         self._render()
+
+    @classmethod
+    async def create(
+        cls, cog: "BotSetup", interaction: discord.Interaction
+    ) -> "SetupWizard":
+        """Resolve what this server is, then build the first step."""
+        return cls(
+            cog,
+            interaction,
+            is_league=await is_league_server(cog.bot, interaction.guild_id),
+        )
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         # The reply is ephemeral, so only the invoker can see it -- but the
@@ -145,73 +200,98 @@ class SetupWizard(discord.ui.View):
 
     # --- rendering ---------------------------------------------------------
 
-    STEPS = ("Privileged roles", "League", "Rumor channel", "Dad jokes", "Setup complete")
+    def _steps(self) -> list[tuple[str, object, object]]:
+        """``(title, build, body)`` for each step of this run.
+
+        The rumor step is only there for a league server. Elsewhere it would ask
+        for a channel that nothing could ever post to, and leave behind a setting
+        that reads like a working one. Binding a league at the step before adds
+        it, which is why the list is rebuilt on every render rather than fixed
+        when the wizard starts.
+        """
+        steps: list[tuple[str, object, object]] = [
+            ("Privileged roles", self._step_roles, self._body_roles),
+            ("League", self._step_league, self._body_league),
+        ]
+        if self.is_league:
+            steps.append(("Rumor channel", self._step_rumors, self._body_rumors))
+        steps.append(("Dad jokes", self._step_jokes, self._body_jokes))
+        steps.append(("Setup complete", self._step_done, self._body_done))
+        return steps
 
     def _render(self) -> None:
         self.clear_items()
-        [
-            self._step_roles,
-            self._step_league,
-            self._step_rumors,
-            self._step_jokes,
-            self._step_done,
-        ][self.step]()
+        steps = self._steps()
+        # Clamped because the step list can grow underneath the index: a league
+        # bound at step two inserts the rumor step after it.
+        self.step = max(0, min(self.step, len(steps) - 1))
+        steps[self.step][1]()
 
     def _embed(self) -> discord.Embed:
-        last = len(self.STEPS) - 1
+        steps = self._steps()
+        last = len(steps) - 1
         embed = discord.Embed(
-            title=f"WojBot setup — {self.STEPS[self.step]}",
-            description=self._body(),
+            title=f"WojBot setup — {steps[self.step][0]}",
+            description=steps[self.step][2](),
             colour=discord.Colour.blurple(),
         )
         if self.step < last:
             embed.set_footer(text=f"Step {self.step + 1} of {last}")
         return embed
 
-    def _body(self) -> str:
-        if self.step == 0:
-            config = self.bot.configs.get_guild(self.guild.id)
-            lines = []
-            for key, label in TIERS:
-                have, missing = _role_status(self.guild, config[key])
-                shown = ", ".join(f"`{n}`" for n in have) or "(none)"
-                gone = f" · missing here: {', '.join(f'`{n}`' for n in missing)}" if missing else ""
-                lines.append(f"**{label}:** {shown}{gone}")
-            return (
-                "Pick the roles that grant each tier in **this server**. Choosing "
-                "replaces that tier's list.\nServer administrators and the bot "
-                "owner always pass regardless.\n\n" + "\n".join(lines)
-            )
-        if self.step == 1:
-            bound = configured_league(self.bot, self.guild.id)
-            current = f"Currently bound to `{bound}`." if bound else "Not bound to a league yet."
-            leagues = configured_leagues()
-            if not leagues:
-                return f"{current}\n\nNo leagues are configured in `sys_config.yml`."
-            return f"{current}\n\nPick the Elo league this server drives."
-        if self.step == 2:
-            current = describe_channel(self.bot.configs, self.guild, RUMOR_CHANNEL_KEY)
-            return (
-                f"Rumors post to {current}.\n\nPick the channel `/rumor report` "
-                "announces to. Without one, rumors are still recorded — they just "
-                "go out to nobody."
-            )
-        if self.step == 3:
-            current = describe_setting(self.bot.configs, self.guild.id, DAD_JOKE_KEY)
-            return (
-                f"Dad jokes are **{current}**.\n\nOn or off makes it this server's "
-                "own, so a later change to the bot-wide default leaves it alone. "
-                "*Follow default* hands the choice back."
-            )
+    def _body_roles(self) -> str:
+        config = self.bot.configs.get_guild(self.guild.id)
+        lines = []
+        for key, label in TIERS:
+            have, missing = _role_status(self.guild, config[key])
+            shown = ", ".join(f"`{n}`" for n in have) or "(none)"
+            gone = f" · missing here: {', '.join(f'`{n}`' for n in missing)}" if missing else ""
+            lines.append(f"**{label}:** {shown}{gone}")
+        return (
+            "Pick the roles that grant each tier in **this server**. Choosing "
+            "replaces that tier's list.\nServer administrators and the bot "
+            "owner always pass regardless.\n\n" + "\n".join(lines)
+        )
+
+    def _body_league(self) -> str:
+        bound = configured_league(self.bot, self.guild.id)
+        current = f"Currently bound to `{bound}`." if bound else "Not bound to a league yet."
+        leagues = configured_leagues()
+        if not leagues:
+            return f"{current}\n\nNo leagues are configured in `sys_config.yml`."
+        note = "" if self.is_league else (
+            "\n\nThe league commands and the rumor mill only work once this "
+            "server drives a league; skip it if this one doesn't."
+        )
+        return f"{current}\n\nPick the Elo league this server drives.{note}"
+
+    def _body_rumors(self) -> str:
+        current = describe_channel(self.bot.configs, self.guild, RUMOR_CHANNEL_KEY)
+        return (
+            f"Rumors post to {current}.\n\nPick the channel `/rumor report` "
+            "announces to. Without one, rumors are still recorded — they just "
+            "go out to nobody."
+        )
+
+    def _body_jokes(self) -> str:
+        current = describe_setting(self.bot.configs, self.guild.id, DAD_JOKE_KEY)
+        return (
+            f"Dad jokes are **{current}**.\n\nOn or off makes it this server's "
+            "own, so a later change to the bot-wide default leaves it alone. "
+            "*Follow default* hands the choice back."
+        )
+
+    def _body_done(self) -> str:
         body = "\n".join(f"• {line}" for line in self.done) or "• (nothing changed)"
-        return f"**Done**\n{body}\n\n{self.cog.outstanding(self.guild)}"
+        outstanding = self.cog.outstanding(self.guild, is_league=self.is_league)
+        return f"**Done**\n{body}\n\n{outstanding}"
 
     async def _advance(self, interaction: discord.Interaction) -> None:
         self.step += 1
         self._render()
         await interaction.response.edit_message(embed=self._embed(), view=self)
 
-    # --- step 1: roles -----------------------------------------------------
+    # --- step: roles -------------------------------------------------------
 
     def _step_roles(self) -> None:
         for key, label in TIERS:
@@ -233,7 +313,7 @@ class SetupWizard(discord.ui.View):
             self.add_item(select)
         self.add_item(_NextButton(self, "Next ›"))
 
-    # --- step 2: league ----------------------------------------------------
+    # --- step: league ------------------------------------------------------
 
     def _step_league(self) -> None:
         leagues = configured_leagues()
@@ -262,6 +342,9 @@ class SetupWizard(discord.ui.View):
                     self.bot.configs.set_guild(
                         self.guild.id, {GUILD_LEAGUE_KEY: system.league}
                     )
+                    # This server runs a league as of now, so the rumor step
+                    # joins the wizard ahead of the one being stood on.
+                    self.is_league = True
                     self.done.append(f"League bound to `{system.league}`")
                 self._render()
                 await interaction.edit_original_response(embed=self._embed(), view=self)
@@ -270,7 +353,7 @@ class SetupWizard(discord.ui.View):
             self.add_item(select)
         self.add_item(_NextButton(self, "Next ›"))
 
-    # --- step 3: rumor channel ---------------------------------------------
+    # --- step: rumor channel (league servers only) -------------------------
 
     def _step_rumors(self) -> None:
         select = discord.ui.ChannelSelect(
@@ -295,7 +378,7 @@ class SetupWizard(discord.ui.View):
         self.add_item(select)
         self.add_item(_NextButton(self, "Next ›"))
 
-    # --- step 4: dad jokes -------------------------------------------------
+    # --- step: dad jokes ---------------------------------------------------
 
     def _step_jokes(self) -> None:
         for label, value, style in (
@@ -352,11 +435,13 @@ class BotSetup(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    def outstanding(self, guild: discord.Guild) -> str:
+    def outstanding(self, guild: discord.Guild, *, is_league: bool) -> str:
         """What still needs doing for this server, with the command for each.
 
         Config-only checks: everything here is a dict or file read, so the
-        overview stays instant and works with the database down.
+        overview stays instant and works with the database down. Whether this
+        server is a league is the one thing that can take a query, so it is
+        resolved by the caller (:func:`is_league_server`) and passed in.
         """
         steps: list[str] = []
         config = self.bot.configs.get_guild(guild.id)
@@ -390,14 +475,17 @@ class BotSetup(commands.Cog):
                     )
                 if not any(s.get("league_members") for s in seasons.values()):
                     steps.append("No rosters scraped yet — `/commish sync`")
-        channel_id = config.get(RUMOR_CHANNEL_KEY)
-        if channel_id is None:
-            steps.append("No rumor channel set — `/setup rumorchannel`")
-        elif guild.get_channel(channel_id) is None:
-            steps.append(
-                f"The rumor channel (`{channel_id}`) no longer exists — "
-                "`/setup rumorchannel`"
-            )
+        # Rumors belong to a league. A server that runs none has nothing to
+        # report, so a missing rumor channel isn't something left undone.
+        if is_league:
+            channel_id = config.get(RUMOR_CHANNEL_KEY)
+            if channel_id is None:
+                steps.append("No rumor channel set — `/setup rumorchannel`")
+            elif guild.get_channel(channel_id) is None:
+                steps.append(
+                    f"The rumor channel (`{channel_id}`) no longer exists — "
+                    "`/setup rumorchannel`"
+                )
         sql = getattr(self.bot, "sql", None)
         if sql is None:
             steps.append("No database service — check `SQL_CONN_URI`")
@@ -413,6 +501,10 @@ class BotSetup(commands.Cog):
     @is_privileged()
     async def show(self, interaction: discord.Interaction) -> None:
         guild = interaction.guild
+        # Deferred for the one check that can reach the database; everything
+        # below it is config.
+        await interaction.response.defer(ephemeral=True)
+        is_league = await is_league_server(self.bot, guild.id)
         config = self.bot.configs.get_guild(guild.id)
         lines = []
         for key, label in TIERS:
@@ -422,23 +514,33 @@ class BotSetup(commands.Cog):
             lines.append(f"**{label} roles:** {shown}{gone}")
         league = configured_league(self.bot, guild.id)
         lines.append(f"**League:** `{league}`" if league else "**League:** not bound")
-        lines.append(
-            f"**Rumor channel:** {describe_channel(self.bot.configs, guild, RUMOR_CHANNEL_KEY)}"
-        )
+        if is_league:
+            lines.append(
+                f"**Rumor channel:** "
+                f"{describe_channel(self.bot.configs, guild, RUMOR_CHANNEL_KEY)}"
+            )
+        else:
+            # Said rather than left out: a setting that quietly isn't listed
+            # reads as one the bot forgot.
+            lines.append(
+                "**Rumor channel:** n/a — this server doesn't run a league"
+            )
         lines.append(
             f"**Dad jokes:** {describe_setting(self.bot.configs, guild.id, DAD_JOKE_KEY)}"
         )
 
         embed = discord.Embed(
             title=f"WojBot setup — {guild.name}",
-            description="\n".join(lines) + "\n\n" + self.outstanding(guild),
+            description=(
+                "\n".join(lines) + "\n\n" + self.outstanding(guild, is_league=is_league)
+            ),
             colour=discord.Colour.blurple(),
         )
         embed.set_footer(
             text="Roles: /verify · dad jokes: /dadjokes · league: /commish · "
                  "rumors: /setup rumorchannel · or walk through it with /setup wizard"
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @group.command(
         name="rumorchannel", description="Set the channel reported rumors post to."
@@ -448,6 +550,18 @@ class BotSetup(commands.Cog):
     async def rumorchannel(
         self, interaction: discord.Interaction, channel: discord.TextChannel
     ) -> None:
+        await interaction.response.defer(ephemeral=True)
+        if not await is_league_server(self.bot, interaction.guild_id):
+            # Storing it would look like it worked, and nothing would ever post
+            # there: /rumor report reaches a server through its league.
+            await interaction.followup.send(
+                "This server doesn't run a league, so there are no rumors to post "
+                "in it. Bind one first with `/setup wizard` or `/commish load`, "
+                "and `/commish db migrate` to adopt its database row — then set "
+                "the channel.",
+                ephemeral=True,
+            )
+            return
         self.bot.configs.set_guild(interaction.guild_id, {RUMOR_CHANNEL_KEY: channel.id})
         # Say up front if the bot can't actually post there: the setting saves
         # either way, and the failure would otherwise only surface later, to
@@ -458,7 +572,7 @@ class BotSetup(commands.Cog):
             else f"\n\n⚠️ I can't send messages in {channel.mention} — "
                  "rumors will be recorded but not announced until that's fixed."
         )
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"Reported rumors will post to {channel.mention}.{warning}", ephemeral=True
         )
 
@@ -489,8 +603,9 @@ class BotSetup(commands.Cog):
     @group.command(name="wizard", description="Walk through setting this server up.")
     @is_privileged()
     async def wizard(self, interaction: discord.Interaction) -> None:
-        view = SetupWizard(self, interaction)
-        await interaction.response.send_message(
+        await interaction.response.defer(ephemeral=True)
+        view = await SetupWizard.create(self, interaction)
+        await interaction.followup.send(
             embed=view._embed(), view=view, ephemeral=True
         )
 
