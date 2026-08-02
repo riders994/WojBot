@@ -8,8 +8,9 @@
 Unlike every other grouped command in the bot, ``/rumor`` is deliberately **not**
 ``guild_only``. Half the point of a rumor is that nobody watched you file it, so
 a manager can run the whole wizard in a DM; the league is worked out from who
-they are rather than from where they typed, and a manager in more than one gets
-asked which.
+they are rather than from where they typed, and a manager in more than one *this
+season* gets asked which. Leagues they have left are not offered — there is
+nothing to report in one, and the choice is noise.
 
 The rules about which sources may carry which release types, and the format
 strings both are written in, live in :mod:`wojbot.core.rumor`.
@@ -32,9 +33,10 @@ log = logging.getLogger(__name__)
 
 WIZARD_TIMEOUT = 300.0
 DEFAULT_RECENT = 5
-# Discord's own ceiling on a paragraph TextInput is 4000; a rumor that long
-# would not fit an embed alongside its attribution anyway.
-MAX_RUMOR_LENGTH = 1000
+# The cap itself lives in core.rumor, which enforces it on the way to the
+# database. Setting it on the TextInput too just means the reporter finds out
+# while they are still typing rather than at the review step.
+MAX_RUMOR_LENGTH = rumors.MAX_RUMOR_LENGTH
 
 # Release types climb from level 0 (idle talk) to 5 (the league speaking), and
 # the colour climbs with them so the weight of one reads before the words do.
@@ -96,8 +98,19 @@ class RumorTextModal(discord.ui.Modal):
         self.add_item(self.entry)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        self.wizard.fills[self.field] = self.entry.value.strip()
-        self.wizard.step += 1
+        text = self.entry.value.strip()
+        # Kept either way, so 'Rewrite it' reopens with what they typed rather
+        # than making them start the paragraph again.
+        self.wizard.fills[self.field] = text
+        try:
+            rumors.check_fill_length(text)
+        except rumors.RumorTooLong as exc:
+            # Only reachable if max_length didn't hold; say so here rather than
+            # letting it fail at the write, two steps later.
+            self.wizard.note = f"⚠️ {exc}"
+        else:
+            self.wizard.note = ""
+            self.wizard.step += 1
         self.wizard._render()
         await interaction.response.edit_message(
             embed=self.wizard._embed(), view=self.wizard
@@ -165,7 +178,10 @@ class RumorWizard(discord.ui.View):
         else:
             view.leagues = await rumors.leagues_for_manager(view.bot, view.manager_id)
             if not view.leagues:
-                raise RumorError("You don't play in any league I know about.")
+                raise RumorError(
+                    "You don't have a team in any league this season, so there's "
+                    "no front office to speak for."
+                )
 
         if len(view.leagues) == 1:
             await view.set_league(view.leagues[0])
@@ -696,13 +712,19 @@ class Rumors(commands.Cog):
                 "You aren't linked to a manager, so I don't know whose rumors to "
                 "show you. A commissioner can link you with `/commish db linkuser`."
             )
+        # This season's leagues only, same as reporting. A league somebody has
+        # left is still readable -- just from its own server, where the league
+        # comes from the channel rather than from who is asking.
         leagues = await rumors.leagues_for_manager(self.bot, manager_id)
         if not leagues:
-            raise RumorError("You don't play in any league I know about.")
+            raise RumorError(
+                "You don't have a team in any league this season. Ask in the "
+                "league's own server and I'll know which wire you mean."
+            )
         if name:
             match = next((lg for lg in leagues if lg.name == name), None)
             if match is None:
-                raise RumorError(f"You're not in a league called **{name}**.")
+                raise RumorError(f"You're not in a league called **{name}** this season.")
             return match
         if len(leagues) > 1:
             names = ", ".join(f"**{lg.name}**" for lg in leagues)
@@ -713,7 +735,7 @@ class Rumors(commands.Cog):
     async def _league_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """The caller's own leagues. Silent on failure — it's only a convenience."""
+        """The caller's leagues this season. Silent on failure — a convenience."""
         try:
             manager_id = await rumors.resolve_manager(self.bot, interaction.user)
             if manager_id is None:

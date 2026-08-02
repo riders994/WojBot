@@ -51,6 +51,12 @@ ENABLED_FORM_IDS: tuple[int, ...] = (1,)
 # manager may claim. Gated on the admin_roles tier in the league's server.
 COMMISSIONER_SOURCE_ID = 10
 
+# How much a reporter may type into one fill. Discord's own ceiling on a
+# paragraph TextInput is 4000, and ``rumor_text`` is an unbounded ``varchar``,
+# so this number is the only thing that bounds the column -- it lives here
+# rather than in the cog because the modal is a courtesy and this is the rule.
+MAX_RUMOR_LENGTH = 1000
+
 # Placeholders a source name can carry, and what fills them.
 TEAM_FIELD = "{team}"
 MANAGER_FIELD = "{manager}"
@@ -102,6 +108,23 @@ class RumorForm:
     title: str
     required_fills: tuple[str, ...] = ()
     valid_sources: tuple[int, ...] = ()
+
+
+class RumorTooLong(ValueError):
+    """A fill longer than :data:`MAX_RUMOR_LENGTH`. The message is for the reporter."""
+
+
+def check_fill_length(text: str, *, limit: int = MAX_RUMOR_LENGTH) -> str:
+    """Return ``text`` if it fits, else raise :class:`RumorTooLong`.
+
+    Rejects rather than truncates: a rumor cut off mid-sentence reads as the
+    reporter's own words, and they can't tell it happened.
+    """
+    if len(text) > limit:
+        raise RumorTooLong(
+            f"A rumor can be at most {limit} characters — that one is {len(text)}."
+        )
+    return text
 
 
 def is_reportable(source: SourceType) -> bool:
@@ -345,7 +368,12 @@ async def league_for_guild(bot, guild_id: int) -> League | None:
 
 
 async def leagues_for_manager(bot, manager_id: int) -> list[League]:
-    """Every league this manager plays in."""
+    """Every league this manager plays in *this season*.
+
+    Leagues they used to be in are left out: there is nothing to report in one,
+    and offering it means asking somebody to choose between the league they play
+    in and one they left.
+    """
     rows = await bot.sql.run("read_manager_leagues", {"manager_id": manager_id})
     return [_league(bot, league_id, name, stored) for league_id, name, stored in rows]
 
@@ -357,9 +385,11 @@ async def current_season(bot, league: League) -> int | None:
 
 
 async def resolve_reporter(bot, manager_id: int, league: League) -> Reporter | None:
-    """Fill in a manager's team and display name for a league's latest season.
+    """Fill in a manager's team and display name for a league's current season.
 
-    None means they have no team in that league -- nothing to report as.
+    None means they have no team in that league this season -- nothing to report
+    as. A season they *used* to have a team in doesn't count: the rumor would be
+    stamped with a season that is over, spoken for a club somebody else runs now.
     """
     rows = await bot.sql.run(
         "read_manager_season", {"manager_id": manager_id, "league_id": league.id}
@@ -392,7 +422,17 @@ async def record_rumor(
     form and source ids are stored too, so the line is rebuilt on the way out
     and a fixed typo in a form's wording reaches every rumor already written in
     it.
+
+    The text is bound by psycopg2 (:meth:`SqlService.run`, never ``execute``),
+    so it can only ever reach the database as a value; the length is checked
+    here because this is the last point before the write, and the modal's
+    ``max_length`` is a client-side courtesy rather than a guarantee.
+
+    Raises:
+        RumorTooLong: if a fill exceeds :data:`MAX_RUMOR_LENGTH`.
     """
+    for value in fills.values():
+        check_fill_length(value)
     rows = await bot.sql.run(
         "write_fact_rumor",
         {

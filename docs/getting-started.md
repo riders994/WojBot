@@ -89,14 +89,17 @@ one. If you own the bot, you always pass, everywhere.
 
 ### 2a. `/setup wizard`
 
-Walks four steps on one message:
+Walks a few steps on one message:
 
 1. **Privileged roles** — which roles get the Commissioner and Admin tiers. See
    [Permissions](#permissions).
 2. **League** — which configured league this server drives. The options come
    from `resources/configs/sys_config.yml`. Picking one loads it, exactly as
    `/commish load` would.
-3. **Rumor channel** — where `/rumor report` announces to.
+3. **Rumor channel** — where `/rumor report` announces to. **League servers
+   only:** the step is there if the server is already bound to a league, or as
+   soon as step two binds it. A server that runs no league has no rumors to
+   post, and the same goes for `/setup rumorchannel`, which declines.
 4. **Dad jokes** — on, off, or follow the bot-wide default.
 
 Every step is optional and you can re-run the wizard, or set any one of them
@@ -139,8 +142,9 @@ store an opaque surrogate and keep the real value bot-side only.
 ```
 
 Lists this server's settings and everything still outstanding, each with the
-command that fixes it. It's all config and file reads, so it works even with the
-database down.
+command that fixes it. Bar one check — whether this server runs a league, which
+can ask the database — it's all config and file reads, so it still works with
+the database down.
 
 ## 3. Using it
 
@@ -209,12 +213,23 @@ Manage them with `/verify add tier:… role:@Role` and `/verify remove`.
 **"You aren't linked to a manager yet"** — nobody ran `/commish db linkuser` for
 that user. See [2c](#2c-link-the-managers).
 
+**"You don't have a team in any league this season"** — they're linked, but no
+team in the league's current season is theirs. Only the current season counts:
+somebody who left after last year can't report, and a league they've left is no
+longer one of the options when they report from a DM. Run `/commish sync` if the
+season's rosters were never scraped.
+
 **"This server isn't linked to a league"** — run `/commish db migrate` (or
 `/commish db link` if the league is already adopted elsewhere).
 
 **Rumors save but never appear** — no rumor channel, or the bot can't post in
 it. `/setup rumorchannel` re-points it and warns you up front if permissions are
 missing. Rumors filed meanwhile are still recorded.
+
+**No rumor step in the wizard, or `/setup rumorchannel` declines** — the bot
+doesn't think this server runs a league. Bind one with `/commish load` (or the
+wizard's league step) and adopt its database row with `/commish db migrate`;
+either binding is enough for the rumor settings to come back.
 
 **"The database is down"** — a bot owner can run `/sql reconnect`. `/sql status`
 shows the connection and how many queries are registered.
