@@ -6,7 +6,19 @@ against the current setup: bot on the x86_64 workstation, Postgres 13 on
 
 The headline is that a new Pi lets you run both machines at once. Dump, restore,
 verify, *then* switch. Nothing here has to be done under pressure, and the old Pi
-stays a working rollback until you deliberately retire it.
+stays a working rollback for as long as you want one.
+
+**The old Pi is not being retired.** It stays in service for other projects and
+keeps the name `thegoldenunasinn`. The new board gets a name of its own and keeps
+it — there is no rename step anywhere in this guide, and never a moment when two
+machines answer to one name. The new name is written `newpi` throughout; that is
+the one string to find-and-replace once you've picked it.
+
+That decision costs exactly one thing, and it is the sharpest edge in the move: a
+config left pointing at `thegoldenunasinn` **will not fail**. It will connect —
+to the old warehouse — and the two copies will drift apart with nothing to tell
+you. A retired Pi would have given you a connection error within seconds. Steps 6
+and 8 are what replace that missing safety net, so don't skip either.
 
 ---
 
@@ -95,9 +107,8 @@ leagues **2**.
 
 ## 2. On the NEW Pi — base system
 
-Give it a **different hostname** while both are alive; rename it to
-`thegoldenunasinn` only once the old one is retired, or you'll have two machines
-answering to the same name.
+Give it its **own hostname** — `newpi` here — and leave it that way.
+`thegoldenunasinn` belongs to the old board and stays with it.
 
 ```bash
 sudo apt update && sudo apt install postgresql git python3-venv
@@ -105,7 +116,13 @@ uname -m        # must print aarch64
 python3 -V      # must be >= 3.11
 ```
 
-Set a **DHCP reservation** on the FiOS gateway so the address never moves.
+Set a **DHCP reservation** on the FiOS gateway for the new board so its address
+never moves. The old one keeps `192.168.1.165`, and now needs a reservation of
+its own if it never had one — two Pis competing for leases is a new problem.
+
+Add an ssh alias for it while you're here. `~/.ssh/config` currently has a single
+`raspi` → `thegoldenunasinn.local`, which stops being an unambiguous name for
+"the Pi" the moment there are two of them.
 
 ## 3. Restore
 
@@ -203,6 +220,10 @@ silently repoints names on rows that are already there.
 **Do not copy** `sql/manager.log.json` or `sql/queries/_queries.json`. They
 regenerate, and a stale log makes the bot skip registering the query files.
 
+Note that `.env` and both `sql_config.yml` files arrive on the new Pi still
+naming `thegoldenunasinn`. Step 6 is where that gets fixed, and it has to happen
+**before the first start**, not after — see the warning at the top of this guide.
+
 If `resources/anon/discord_ids.json` exists by then, it is the **most important
 file in the transfer** — it is the only place the mapping from real Discord IDs
 to the surrogates stored in `dim_league.discord_server_id` and
@@ -211,7 +232,27 @@ to the surrogates stored in `dim_league.discord_server_id` and
 
 ## 6. Point it at localhost
 
-Edit `.env`: comment out `SQL_CONN_URI` and use the fields, which is what the
+**Three files name the database host, not one.** All of them came across in step
+5 pointing at `thegoldenunasinn`, and with the old board still serving Postgres
+every one of them is a live route back to the stale warehouse:
+
+| file | read by | what to do |
+|---|---|---|
+| `.env` | the bot's `SqlService` | switch to the `SQL_*` fields, below |
+| `resources/configs/sql_config.yml` | `EloSystem` → `EloSQL` | set `conn_uri` to `127.0.0.1` |
+| `sql_config.yml` (repo root) | nothing on this path | correct it or delete it |
+
+The middle one is the one that gets missed. `resources/configs/sys_config.yml`
+sets `sql_config_name: sql_config.yml`, and `EloSystem` resolves that against its
+`configs_dir` — which is `resources/configs/`, not the repo root. `EloSQL`
+validates and stores that URI even when the bot hands it a live connection to
+reuse (`wojbot/core/elo.py`), and the bot only hands one over when it *has* one.
+So the host in that file can genuinely be dialled.
+
+The root `sql_config.yml` is on nobody's read path, but it holds the same string,
+and a second copy of a wrong hostname is a trap for whoever reads this next.
+
+Now `.env`: comment out `SQL_CONN_URI` and use the fields, which is what the
 commented block at the bottom of the file is for.
 
 ```
@@ -244,6 +285,15 @@ from wojbot.core.config import Settings
 import re; s=Settings.load()
 print(re.sub(r'://([^:@/]*)(:[^@]*)?@', r'://\1:***@', s.sql_conn_uri or ''))"
 ```
+
+Then make sure nothing else still points at the old box:
+
+```bash
+grep -rn thegoldenunasinn ~/WojBot --exclude-dir=.git --exclude-dir=.venv
+```
+
+Anything this prints outside `docs/` is a route back to the stale warehouse.
+Expect no hits at all once the three files above are done.
 
 ## 7. Run it as a service
 
@@ -300,7 +350,38 @@ systemd-time-wait-sync` if you see it happen.
 3. `/ping`, then `/sql status` — it should report the connection up and 10
    registered queries.
 4. `/setup show` in each league server.
-5. Leave the old Pi powered off but unwiped for a couple of weeks.
+5. Report one throwaway rumor and read it back with `/rumor recent`, then confirm
+   the row landed on the **new** box and not the old one:
+   ```bash
+   ssh newpi            "sudo -u postgres psql -Atc \
+     'SELECT count(*) FROM fantasy_sports.fact_rumor' wojbot_db"
+   ssh thegoldenunasinn "sudo -u postgres psql -Atc \
+     'SELECT count(*) FROM fantasy_sports.fact_rumor' wojbot_db"
+   ```
+   The new count went up and the old one didn't. If it's the other way round,
+   something is still reading a config from step 6.
+6. **Take the old warehouse out of service**, once the counts above satisfy you.
+   With the board staying on for other projects, this is what "powered off but
+   unwiped" used to do for free — it makes a config you missed fail loudly
+   instead of silently succeeding.
+
+   Keep the data, drop the route to it. Cheapest first:
+
+   ```bash
+   # on thegoldenunasinn — if nothing else there needs Postgres
+   sudo systemctl disable --now postgresql
+   ```
+
+   If other projects on that board *do* need Postgres, leave the server up and
+   revoke the bot's way in instead:
+
+   ```sql
+   ALTER ROLE pylot NOLOGIN;
+   ALTER DATABASE wojbot_db RENAME TO wojbot_db_retired_2026_08;
+   ```
+
+   Either way the dump from step 1 is still your rollback, and the database is
+   still on disk. Keep the dumps for a couple of weeks regardless.
 
 ---
 
@@ -324,7 +405,13 @@ that still connects over the network with a hosts entry that pins IPv4:
 ```
 # /etc/hosts on the workstation
 192.168.1.165  thegoldenunasinn
+<new-pi-ip>    newpi
 ```
+
+**This isn't currently applied** — the workstation's `/etc/hosts` has no entry
+for either box, so both are resolving over mDNS (`~/.ssh/config` points `raspi`
+at `thegoldenunasinn.local`). Worth adding for both now that two Pis are staying
+on the network.
 
 **The `No route to host` half is a real network drop**, and the usual suspects
 on a Pi are, roughly in order of likelihood:
@@ -349,7 +436,8 @@ on a Pi are, roughly in order of likelihood:
 talking to `127.0.0.1`, and loopback doesn't flap — no DNS, no Wi-Fi, no
 gateway. Anything still connecting over the network (DataGrip from the
 workstation, say) keeps the old exposure, which is the reason to bother with the
-hosts entry and the power-save setting even after the move.
+hosts entry and the power-save setting even after the move — and with the old
+board staying in service for other work, that reason doesn't expire.
 
 So: a fresh 64-bit install on good storage plausibly fixes the flapping, and
 colocating the bot makes it irrelevant to the bot either way. Don't count on the
