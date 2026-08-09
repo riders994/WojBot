@@ -177,10 +177,18 @@ sudo -u postgres psql -Atc \
   "SELECT rolname, left(rolpassword, 4) FROM pg_authid WHERE rolcanlogin"
 ```
 
-Postgres 13 defaults `password_encryption` to **md5**; the default only flipped
-to `scram-sha-256` in 14. So expect `md5…` here, and see the warning in step 3 —
-those hashes restore fine and then fail to authenticate against a fresh 15/17
-`pg_hba.conf`.
+Postgres 13 defaults `password_encryption` to **md5** — the default only flipped
+to `scram-sha-256` in 14 — so `md5…` is the answer to plan for. If you get it,
+see the warning in step 3: those hashes restore fine and then fail to
+authenticate against a fresh 15/17 `pg_hba.conf`.
+
+Don't assume it, though. As of the 2026-08-01 dump this cluster answers `SCRA`
+for all eight login roles, `password_encryption` having evidently been switched
+at some point, with `postgres` itself blank because it authenticates by peer and
+has no password. That combination needs no fixup at all — fresh 15/17 installs
+default to `scram-sha-256` for host connections, so the hashes land and work.
+Re-run the same query on the **new** Pi once the roles are restored if you want
+it confirmed there rather than inferred.
 
 Now copy both dumps **off the Pi** before you touch anything:
 
@@ -258,17 +266,111 @@ scp ~/backups/wojbot-full-2026-07-29.sql ~/backups/wojbot_db-2026-07-29.dump new
 > `sql/databases/wojbot_db/01_`–`05_` in that repo are the *fallback* for a dump
 > that turns out to be unusable, not a prerequisite.
 
+### First: the databases want the old box's locale
+
+Both `CREATE DATABASE` lines in the dump carry `LOCALE = 'en_GB.UTF-8'`,
+inherited from the old Raspbian install. If the imager set the new Pi to `en_US`
+or left it at `C.UTF-8`, the restore gets all the way through the roles and then
+fails with `invalid locale name`. Check first — it's read-only, and it decides
+whether the cluster you restore into is the right one:
+
 **[ NEW PI ]**
 
 ```bash
-sudo -u postgres psql -v ON_ERROR_STOP=1 -f wojbot-full-2026-07-29.sql 2>&1 \
+locale -a | grep -i en_GB
+```
+
+If it prints nothing, generate it:
+
+```bash
+sudo sed -i 's/^# *en_GB.UTF-8 UTF-8/en_GB.UTF-8 UTF-8/' /etc/locale.gen
+sudo locale-gen
+```
+
+Get this out of the way before you restore, and before any `pg_createcluster`
+below — that command fails outright on a locale the system hasn't generated,
+and doing it in this order also leaves the cluster's own template databases
+matching the ones being restored into it.
+
+### Then the restore itself
+
+**[ NEW PI ]**
+
+```bash
+sed -e '/^CREATE ROLE postgres;$/d' \
+    -e 's/^\(GRANT .*\) GRANTED BY [^;]*;$/\1;/' \
+    wojbot-full-2026-07-29.sql \
+  | sudo -u postgres psql -v ON_ERROR_STOP=1 -f - 2>&1 \
   | tee ~/restore.log
 ```
 
+Three things about that pipeline, each of which cost a restore to learn.
+
+First, feed the dump in on **stdin**, not with `-f wojbot-full-….sql`. `psql`
+runs as the `postgres` user here, and bookworm and trixie both create home
+directories `0750`, so `postgres` can't traverse into yours to read a file you
+just `scp`'d there — you get `psql: error: wojbot-full-….sql: Permission denied`
+before a single statement runs. The `sed` reading the file (or a plain `< …`
+redirect, if you drop the filters) runs as *you*, before `sudo` lowers
+privileges, so permissions never enter into it. Don't `chmod o+x`
+your home directory to work around it; if you'd rather have a real path (handy
+if you expect to re-run the restore), `sudo mv` both files to `/var/tmp` and
+`sudo chown postgres:` them instead.
+
+Second, **filter out `CREATE ROLE postgres;`**. `pg_dumpall` 13 emits it — it does
+*not* special-case the bootstrap superuser — and it is the one statement in the
+file that cannot succeed, because every freshly-initdb'd cluster already has
+that role. The `ALTER ROLE postgres WITH …` on the next line is what actually
+carries the attributes, and they're the stock bootstrap set, so deleting the
+`CREATE` loses nothing. Filtering the single known-impossible statement is much
+better than dropping `ON_ERROR_STOP` to get past it.
+
+Third, **strip the `GRANTED BY` clauses off the role memberships**. This is a
+genuine PG13→16+ incompatibility rather than a quirk. The dump's globals section
+ends with fourteen lines like:
+
+```sql
+GRANT consumer TO jordanpokesaserver GRANTED BY piders994;
+```
+
+PostgreSQL 16 tightened `GRANT`: the role named as grantor must hold ADMIN
+OPTION on the role being granted, and the only role exempt from the check is the
+bootstrap superuser (`postgres`, OID 10). On the old 13 cluster `piders994`
+could grant these purely by being a superuser, so nothing ever recorded an admin
+option — and `pg_dumpall` 13 has no `WITH ADMIN OPTION` to emit. Replay them
+unmodified on trixie's 17 and every `GRANTED BY piders994` line fails with:
+
+```
+ERROR:  permission denied to grant privileges as role "piders994"
+DETAIL:  The grantor must have the ADMIN option on role "consumer".
+```
+
+The `GRANTED BY postgres` lines in the same block *do* succeed, which makes the
+failure look arbitrary until you know the OID 10 exemption. Dropping the clause
+lets the grants run as the connected superuser. The memberships that result are
+identical; all that changes is the grantor recorded in `pg_auth_members`, which
+after a migration is more accurate as `postgres` anyway.
+
+Bookworm's 15 predates the tightening and would replay these lines as-is, but
+the `sed` is a no-op there in every way that matters, so run it on either image
+rather than tracking which rule applies.
+
 `ON_ERROR_STOP=1` is what turns a silent partial restore into an obvious one.
-Against a genuinely fresh cluster this should run clean — `pg_dumpall` emits
-`ALTER ROLE` rather than `CREATE ROLE` for the bootstrap `postgres` superuser, so
-there's nothing legitimate for it to trip over.
+Don't reach for `--single-transaction` to get the same protection: the dump uses
+`\connect` to switch between databases, which can't happen inside a transaction
+block.
+
+> **If a restore does abort partway, reset the cluster before retrying.** psql
+> auto-commits each statement, so an abort in the globals section leaves behind
+> every role and membership it had already created, and the retry dies on the
+> first of them instead. There's nothing worth salvaging at that point:
+>
+> ```bash
+> pg_lsclusters                       # note the version in column 1
+> VER=17                              # ← whatever that printed; 15 on bookworm
+> sudo pg_dropcluster --stop $VER main
+> sudo pg_createcluster --locale en_GB.UTF-8 --start $VER main
+> ```
 
 ### Re-set the login passwords if they were md5
 
