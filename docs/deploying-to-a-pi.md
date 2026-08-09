@@ -684,9 +684,15 @@ workstation's account — is never the right answer here.
 **[ NEW PI ]**
 
 ```bash
-sudo systemctl daemon-reload && sudo systemctl enable --now wojbot
-journalctl -u wojbot -f
+sudo systemctl daemon-reload && sudo systemctl enable wojbot
+systemctl cat wojbot        # confirm systemd sees what you just wrote
 ```
+
+**`enable`, not `enable --now`.** This registers the unit for boot without
+starting it. The bot on the workstation is still running and still holds the
+Discord token, and two instances on one token against two different warehouses
+is precisely the divergence this guide exists to avoid. Step 8 performs the only
+start, in the right order.
 
 **`WorkingDirectory` is load-bearing**, and its failure mode is misleading.
 `load_dotenv()` finds `.env` relative to the current directory, so a unit
@@ -708,17 +714,24 @@ you've fitted the battery to the RTC connector. `After=network-online.target`
 doesn't cover this; add `After=time-sync.target` and `sudo systemctl enable
 systemd-time-wait-sync` if you see it happen.
 
-At this point both bots would run against different warehouses, so don't leave
-it here long — go straight to step 8. (If you need to pause, stop the new one:
-`sudo systemctl stop wojbot`.)
+Nothing is running on the new Pi yet, so you can stop here for as long as you
+like. Steps 1–7 leave the workstation bot untouched and in charge; step 8 is the
+first and only moment anything changes.
 
 ## 8. Cut over
 
-1. **[ WORKSTATION ]** Stop the bot.
+1. **[ WORKSTATION ]** Stop the bot, and confirm it's actually down before
+   moving on. Both instances share one Discord token, so overlapping them gets
+   you duplicated command responses and two processes writing to two different
+   warehouses.
 2. **[ NEW PI ]** Start it, and watch for a clean login:
    ```bash
    sudo systemctl start wojbot && journalctl -u wojbot -f
    ```
+   This is the **first** time the unit has ever run, so this is where a bad
+   `WorkingDirectory` or an unreadable `.env` shows up — see step 7 for what
+   that looks like. If it won't come up, start the workstation bot again and
+   debug with no clock running; nothing is lost.
 3. **[ DISCORD ]** `/ping`, then `/sql status` — it should report the connection
    up and 10 registered queries.
 4. **[ DISCORD ]** `/setup show` in each league server.
@@ -763,7 +776,14 @@ it here long — go straight to step 8. (If you need to pause, stop the new one:
 
 Nothing before step 8 is destructive, so the rollback is short: stop the unit on
 the new Pi, undo whichever half of step 8.6 you applied, and start the bot on the
-workstation again. Its config still names `thegoldenunasinn` — the very thing
+workstation again.
+
+Use `sudo systemctl disable --now wojbot` rather than a bare `stop`. Step 7
+enabled it for boot, so a stopped-but-enabled unit comes back on the Pi's next
+reboot and quietly rejoins Discord against the new warehouse — with the
+workstation bot also running by then.
+
+Its config still names `thegoldenunasinn` — the very thing
 that makes a missed config dangerous during the move is what makes the rollback
 trivial. Rumors reported through the new Pi in between live only in the new
 warehouse; if that matters, dump `fact_rumor` from it before you turn it off.
