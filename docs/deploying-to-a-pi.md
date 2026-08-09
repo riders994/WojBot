@@ -39,8 +39,9 @@ old-Pi-versus-new-Pi, and both answer to `sudo -u postgres psql` with a
 plausible-looking `wojbot_db`.
 
 Anything below tagged **[ WORKSTATION ]** that mentions a path is relative to
-`/home/weezy/activity/WojBot` unless it says otherwise; the copies on both Pis
-live at `~/WojBot`.
+`/home/weezy/activity/WojBot` unless it says otherwise. The new Pi's checkout
+sits at the matching `~/activity/WojBot`; the old Pi has no checkout at all,
+only the database.
 
 ## The move at a glance
 
@@ -120,9 +121,9 @@ doesn't help and actively hurts — see the warning in step 3.
 **OS users — you need exactly one, `piders994`.** That's the primary account on
 both boards, so it's what Raspberry Pi Imager's "Set username and password"
 panel should say. The systemd unit in step 7 runs as `User=piders994` out of
-`/home/piders994/WojBot`, and the rsync in step 5 targets
-`wojingtonpost:WojBot/`, which resolves to that same home directory. Use any
-other name and you own the job of editing both.
+`/home/piders994/activity/WojBot`, and the rsync in step 5 targets
+`wojingtonpost:activity/WojBot/`, which is the same directory written relative to
+that account's home. Use any other name and you own the job of editing both.
 
 Note this is *not* the workstation's account: the repo lives at
 `/home/weezy/activity/WojBot` there, and `weezy` never exists on a Pi. A
@@ -251,7 +252,7 @@ Then, off the Pi:
 - Add an ssh alias for the new box to `~/.ssh/config`. Prefer the machine's real
   hostname over a role name: `raspi` was fine while there was one Pi, and became
   ambiguous the moment there were two. Worse, **both boards use the same
-  `piders994` account**, so a path like `/home/piders994/WojBot` in an error
+  `piders994` account**, so a path like `/home/piders994/activity/WojBot` in an error
   message doesn't tell you which machine you're on — the hostname is the only
   thing that does.
 
@@ -475,17 +476,24 @@ or clone the HTTPS URL if you'd rather not.
 **[ NEW PI ]**
 
 ```bash
+mkdir -p ~/activity && cd ~/activity
 git clone git@github.com:riders994/WojBot.git && cd WojBot
+pwd                     # must print /home/piders994/activity/WojBot
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.lock
 .venv/bin/pip install -e . --no-deps
 ```
 
-This has to land at `/home/piders994/WojBot` for the unit file in step 7 and the
-rsync in step 5 to match — which it does if you cloned from the home directory.
-Check it with `pwd` before moving on; a clone made somewhere else leaves step 5
-building a second, resource-only `~/WojBot` beside the real checkout, and step 7
-pointing at whichever of the two is wrong.
+The `activity/` level is deliberate — it mirrors the workstation, where the repo
+lives at `/home/weezy/activity/WojBot`, so the same relative path means the same
+thing on either machine.
+
+That `pwd` matters, because three later things are pinned to this exact
+directory: step 5's rsync target, step 7's `WorkingDirectory` and its
+`ExecStart`. Clone one level up by mistake and the rsync quietly builds a
+*second*, resource-only `WojBot` next to the real checkout — no error, no
+warning, and the bot then starts against whichever of the two the unit file
+happens to name.
 
 **Install from `requirements.lock`, not from `pyproject.toml`.** The constraints
 in `pyproject.toml` are ranges, so a plain `pip install -e .` resolves them
@@ -532,7 +540,7 @@ rsync -av --relative \
   .env sql_config.yml \
   resources/configs/sql_config.yml \
   resources/anon/ resources/ratings/ \
-  wojingtonpost:WojBot/
+  wojingtonpost:activity/WojBot/
 ```
 
 **`resources/anon/` is not optional.** Those are the anonymizer's reversal maps.
@@ -559,7 +567,7 @@ to the surrogates stored in `dim_league.discord_server_id` and
 
 ## 6. Point it at localhost
 
-Everything in this step is **[ NEW PI ]**, in `~/WojBot`.
+Everything in this step is **[ NEW PI ]**, in `~/activity/WojBot`.
 
 **Three files name the database host, not one.** All of them came across in step
 5 pointing at `thegoldenunasinn`, and with the old board still serving Postgres
@@ -616,7 +624,7 @@ the two settings pull in opposite directions and `listen_addresses` wins.
 
 Check the bot resolves the URI it should, without printing the password:
 
-**[ NEW PI ]** — from `~/WojBot`
+**[ NEW PI ]** — from `~/activity/WojBot`
 
 ```bash
 .venv/bin/python -c "
@@ -630,7 +638,7 @@ Then make sure nothing else still points at the old box:
 **[ NEW PI ]**
 
 ```bash
-grep -rn thegoldenunasinn ~/WojBot --exclude-dir=.git --exclude-dir=.venv
+grep -rn thegoldenunasinn ~/activity/WojBot --exclude-dir=.git --exclude-dir=.venv
 ```
 
 Anything this prints outside `docs/` is a route back to the stale warehouse.
@@ -650,8 +658,8 @@ Requires=postgresql.service
 [Service]
 Type=simple
 User=piders994
-WorkingDirectory=/home/piders994/WojBot
-ExecStart=/home/piders994/WojBot/.venv/bin/wojbot
+WorkingDirectory=/home/piders994/activity/WojBot
+ExecStart=/home/piders994/activity/WojBot/.venv/bin/wojbot
 Restart=always
 RestartSec=10
 
