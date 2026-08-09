@@ -636,7 +636,7 @@ in `.env`:
 import os, discord
 from discord import app_commands
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(".env")      # explicit: a stdin script has no frame to search from
 GUILD = int(os.environ["DISCORD_GUILD_ID"])
 class C(discord.Client):
     def __init__(self):
