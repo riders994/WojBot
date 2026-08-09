@@ -117,14 +117,23 @@ of them is your problem.
 them, passwords and role memberships included. Pre-creating them on the new Pi
 doesn't help and actively hurts — see the warning in step 3.
 
-**OS users — you need exactly one, `weezy`.** The systemd unit in step 7 runs as
-`User=weezy` out of `/home/weezy/WojBot`, and the rsync in step 5 targets
-`wojingtonpost:WojBot/`. Name the primary account `weezy` in Raspberry Pi Imager's "Set
-username and password" panel and the whole guide lines up as written; call it
-anything else and you own the job of editing both. `postgres` arrives with the
-package. **Nothing needs an OS account named `pylot`, `piders994` or
-`moderator`** — that is exactly why step 6 connects over `127.0.0.1` instead of
-the Unix socket, since a `local ... peer` rule *would* demand one.
+**OS users — you need exactly one, `piders994`.** That's the primary account on
+both boards, so it's what Raspberry Pi Imager's "Set username and password"
+panel should say. The systemd unit in step 7 runs as `User=piders994` out of
+`/home/piders994/WojBot`, and the rsync in step 5 targets
+`wojingtonpost:WojBot/`, which resolves to that same home directory. Use any
+other name and you own the job of editing both.
+
+Note this is *not* the workstation's account: the repo lives at
+`/home/weezy/activity/WojBot` there, and `weezy` never exists on a Pi. A
+`/home/…/WojBot` path is only unambiguous once you know which machine printed
+it.
+
+`postgres` arrives with the package. **Nothing needs an OS account named `pylot`
+or `moderator`** — those are Postgres roles, not Unix users, which is exactly
+why step 6 connects over `127.0.0.1` instead of the Unix socket, since a
+`local … peer` rule *would* demand one. `piders994` being both an OS account and
+a Postgres superuser role here is a coincidence of naming, not a requirement.
 
 ---
 
@@ -204,7 +213,7 @@ scp oldpi:'wojbot-*.sql' oldpi:'wojbot_db-*.dump' ~/backups/
 
 Give it its **own hostname** — `wojingtonpost` here — and leave it that way.
 `thegoldenunasinn` belongs to the old board and stays with it. Set the primary
-user to `weezy` while you're in the imager, per the accounts section above.
+user to `piders994` while you're in the imager, per the accounts section above.
 
 **[ NEW PI ]**
 
@@ -472,9 +481,11 @@ python3 -m venv .venv
 .venv/bin/pip install -e . --no-deps
 ```
 
-This has to land at `/home/weezy/WojBot` for the unit file in step 7 and the
-rsync in step 5 to match — which it does if the account is `weezy` and you
-cloned from the home directory.
+This has to land at `/home/piders994/WojBot` for the unit file in step 7 and the
+rsync in step 5 to match — which it does if you cloned from the home directory.
+Check it with `pwd` before moving on; a clone made somewhere else leaves step 5
+building a second, resource-only `~/WojBot` beside the real checkout, and step 7
+pointing at whichever of the two is wrong.
 
 **Install from `requirements.lock`, not from `pyproject.toml`.** The constraints
 in `pyproject.toml` are ranges, so a plain `pip install -e .` resolves them
@@ -638,9 +649,9 @@ Requires=postgresql.service
 
 [Service]
 Type=simple
-User=weezy
-WorkingDirectory=/home/weezy/WojBot
-ExecStart=/home/weezy/WojBot/.venv/bin/wojbot
+User=piders994
+WorkingDirectory=/home/piders994/WojBot
+ExecStart=/home/piders994/WojBot/.venv/bin/wojbot
 Restart=always
 RestartSec=10
 
@@ -648,8 +659,9 @@ RestartSec=10
 WantedBy=multi-user.target
 ```
 
-`User=` and both paths assume the OS account is `weezy`; fix all three together
-if it isn't.
+`User=` and both paths assume the OS account is `piders994`; fix all three
+together if it isn't. Note the unit runs on the Pi, so `weezy` — the
+workstation's account — is never the right answer here.
 
 **[ NEW PI ]**
 
