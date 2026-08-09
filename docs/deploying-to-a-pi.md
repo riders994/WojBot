@@ -617,6 +617,51 @@ The fields escape the password for you.
 Use `127.0.0.1` rather than a Unix socket: the socket path is likely governed by
 a `local ... peer` rule that would demand an OS user named `pylot`.
 
+**Also comment out `DISCORD_GUILD_ID` while you're in there.** It is a
+development convenience and the Pi is production. The bot syncs its commands
+globally and then, if that variable is set, *copies* them into that one guild
+and syncs again — and a guild copy of a global command is a second registration,
+not a replacement (`wojbot/bot.py`). The result is every command listed twice in
+the picker in that server. The workstation's `.env` has it set, step 5 copies
+`.env` verbatim, so the behaviour follows the bot to the Pi.
+
+Unsetting it stops *new* copies; the ones already registered live on Discord's
+side until cleared explicitly. Clear them first, while the id is still readable
+in `.env`:
+
+**[ NEW PI ]** — from `~/activity/WojBot`
+
+```bash
+.venv/bin/python - <<'EOF'
+import os, discord
+from discord import app_commands
+from dotenv import load_dotenv
+load_dotenv()
+GUILD = int(os.environ["DISCORD_GUILD_ID"])
+class C(discord.Client):
+    def __init__(self):
+        super().__init__(intents=discord.Intents.none())
+        self.tree = app_commands.CommandTree(self)
+    async def setup_hook(self):
+        g = discord.Object(id=GUILD)
+        self.tree.clear_commands(guild=g)
+        await self.tree.sync(guild=g)
+        print("cleared guild-scoped commands")
+        await self.close()
+C().run(os.environ["DISCORD_TOKEN"])
+EOF
+```
+
+Then comment the variable out. Global commands are untouched, so nothing
+disappears from other servers; reload the Discord client if the picker still
+shows the old list.
+
+The workstation bot is still running at this point, and that's fine here: this
+client declares no intents, registers no commands and closes itself inside
+`setup_hook`, so it never handles an event. It is not a second bot in any sense
+that matters — unlike leaving the step 7 unit running alongside it, which is why
+step 7 doesn't start anything.
+
 Then lock the database down — it no longer needs to be on the network at all:
 
 **[ NEW PI ]** — `/etc/postgresql/<version>/main/postgresql.conf`
