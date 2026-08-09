@@ -11,8 +11,9 @@ stays a working rollback for as long as you want one.
 **The old Pi is not being retired.** It stays in service for other projects and
 keeps the name `thegoldenunasinn`. The new board gets a name of its own and keeps
 it — there is no rename step anywhere in this guide, and never a moment when two
-machines answer to one name. The new name is written `newpi` throughout; that is
-the one string to find-and-replace once you've picked it.
+machines answer to one name. That name is `wojingtonpost`, and it is written out
+throughout rather than left as a placeholder, so every command below can be run
+as-is.
 
 That decision costs exactly one thing, and it is the sharpest edge in the move: a
 config left pointing at `thegoldenunasinn` **will not fail**. It will connect —
@@ -30,8 +31,8 @@ Each command block is tagged with the box it runs on.
 | tag | machine | what it is | reached by |
 |---|---|---|---|
 | **[ WORKSTATION ]** | the x86_64 desktop | where the bot runs today, and where this repo lives at `/home/weezy/activity/WojBot` | you're sitting at it |
-| **[ OLD PI ]** | `thegoldenunasinn` | 192.168.1.165 — Postgres 13.23, bullseye, 32-bit. Stays in service. | `ssh thegoldenunasinn` (currently aliased `raspi`) |
-| **[ NEW PI ]** | `newpi` | the fresh 64-bit board — ends up running *both* Postgres and the bot | `ssh newpi`, once step 2 sets it up |
+| **[ OLD PI ]** | `thegoldenunasinn` | 192.168.1.165 — Postgres 13.23, bullseye, 32-bit. Stays in service. | `ssh oldpi` (also aliased `raspi`; **not** port 22) |
+| **[ NEW PI ]** | `wojingtonpost` | the fresh 64-bit board — ends up running *both* Postgres and the bot | `ssh wojingtonpost`, once step 2 sets it up |
 
 When in doubt, `hostname` settles it. The dangerous confusions are all
 old-Pi-versus-new-Pi, and both answer to `sudo -u postgres psql` with a
@@ -118,7 +119,7 @@ doesn't help and actively hurts — see the warning in step 3.
 
 **OS users — you need exactly one, `weezy`.** The systemd unit in step 7 runs as
 `User=weezy` out of `/home/weezy/WojBot`, and the rsync in step 5 targets
-`newpi:WojBot/`. Name the primary account `weezy` in Raspberry Pi Imager's "Set
+`wojingtonpost:WojBot/`. Name the primary account `weezy` in Raspberry Pi Imager's "Set
 username and password" panel and the whole guide lines up as written; call it
 anything else and you own the job of editing both. `postgres` arrives with the
 package. **Nothing needs an OS account named `pylot`, `piders994` or
@@ -196,12 +197,12 @@ Now copy both dumps **off the Pi** before you touch anything:
 
 ```bash
 mkdir -p ~/backups
-scp thegoldenunasinn:wojbot-*.sql thegoldenunasinn:wojbot_db-*.dump ~/backups/
+scp oldpi:'wojbot-*.sql' oldpi:'wojbot_db-*.dump' ~/backups/
 ```
 
 ## 2. Base system on the new Pi
 
-Give it its **own hostname** — `newpi` here — and leave it that way.
+Give it its **own hostname** — `wojingtonpost` here — and leave it that way.
 `thegoldenunasinn` belongs to the old board and stays with it. Set the primary
 user to `weezy` while you're in the imager, per the accounts section above.
 
@@ -234,18 +235,40 @@ Then, off the Pi:
 **[ WORKSTATION ]**
 
 - Set a **DHCP reservation** on the FiOS gateway for the new board so its
-  address never moves. The old one keeps `192.168.1.165`, and now needs a
-  reservation of its own if it never had one — two Pis competing for leases is a
-  new problem.
-- Add an ssh alias for the new box to `~/.ssh/config`. It currently has a single
-  `raspi` → `thegoldenunasinn.local`, which stops being an unambiguous name for
-  "the Pi" the moment there are two of them. Give the new one the literal name
-  `newpi`, since every remote command below assumes it.
-- `ssh-copy-id newpi` so the rest of the guide's `scp`/`rsync` calls don't prompt.
+  address never moves. The new one sits at `192.168.50.60`, the old one keeps
+  `192.168.1.165` and now needs a reservation of its own if it never had one —
+  two Pis competing for leases is a new problem. Note they're on **different
+  subnets**, which matters for the cross-box checks in step 8.
+- Add an ssh alias for the new box to `~/.ssh/config`. Prefer the machine's real
+  hostname over a role name: `raspi` was fine while there was one Pi, and became
+  ambiguous the moment there were two. Worse, **both boards use the same
+  `piders994` account**, so a path like `/home/piders994/WojBot` in an error
+  message doesn't tell you which machine you're on — the hostname is the only
+  thing that does.
+
+  ```
+  # Old Pi — Postgres 13, bullseye, 32-bit. Rollback target until retired.
+  Host raspi oldpi
+      HostName thegoldenunasinn.local
+      Port 50314
+      User piders994
+
+  # New Pi — the migration target.
+  Host wojingtonpost newpi
+      HostName 192.168.50.60
+      User piders994
+  ```
+- `ssh-copy-id wojingtonpost` so the rest of the guide's `scp`/`rsync` calls
+  don't prompt.
 
 ```bash
-ssh newpi hostname     # prints the new name → alias and key are both good
+ssh wojingtonpost hostname     # prints wojingtonpost → alias and key are both good
 ```
+
+That last check is worth actually running. `wojingtonpost` resolves through the
+alias above and **not** through DNS or mDNS, so an `rsync` written against a
+name your ssh config doesn't define fails with `Could not resolve hostname`
+rather than doing anything useful.
 
 ## 3. Restore
 
@@ -255,7 +278,7 @@ First get the dump onto the new box — it's currently only on the old Pi and in
 **[ WORKSTATION ]**
 
 ```bash
-scp ~/backups/wojbot-full-2026-07-29.sql ~/backups/wojbot_db-2026-07-29.dump newpi:
+scp ~/backups/wojbot-full-2026-07-29.sql ~/backups/wojbot_db-2026-07-29.dump wojingtonpost:
 ```
 
 > **Do not run the `leagueSQL` scripts first.** `pg_dumpall`'s globals section
@@ -498,7 +521,7 @@ rsync -av --relative \
   .env sql_config.yml \
   resources/configs/sql_config.yml \
   resources/anon/ resources/ratings/ \
-  newpi:WojBot/
+  wojingtonpost:WojBot/
 ```
 
 **`resources/anon/` is not optional.** Those are the anonymizer's reversal maps.
@@ -675,9 +698,9 @@ it here long — go straight to step 8. (If you need to pause, stop the new one:
 
    **[ WORKSTATION ]**
    ```bash
-   ssh newpi            "sudo -u postgres psql -Atc \
+   ssh wojingtonpost    "sudo -u postgres psql -Atc \
      'SELECT count(*) FROM fantasy_sports.fact_rumor' wojbot_db"
-   ssh thegoldenunasinn "sudo -u postgres psql -Atc \
+   ssh oldpi            "sudo -u postgres psql -Atc \
      'SELECT count(*) FROM fantasy_sports.fact_rumor' wojbot_db"
    ```
    The new count went up and the old one didn't. If it's the other way round,
@@ -737,8 +760,8 @@ that still connects over the network with a hosts entry that pins IPv4:
 **[ WORKSTATION ]** — `/etc/hosts`
 
 ```
-192.168.1.165  thegoldenunasinn
-<new-pi-ip>    newpi
+192.168.1.165   thegoldenunasinn
+192.168.50.60   wojingtonpost
 ```
 
 **This isn't currently applied** — the workstation's `/etc/hosts` has no entry
