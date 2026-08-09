@@ -52,7 +52,7 @@ only the database.
 | 3 | WORKSTATION → NEW PI | ship the dump over, restore it, re-set passwords, verify |
 | 4 | NEW PI | clone the repo, build the venv from the lock |
 | 5 | WORKSTATION | rsync the gitignored state the clone doesn't carry |
-| 6 | NEW PI | repoint three config files at localhost |
+| 6 | NEW PI | repoint both config files at localhost |
 | 7 | NEW PI | systemd unit |
 | 8 | everywhere | cut over, prove the writes land on the new box, close the route to the old one |
 
@@ -524,7 +524,6 @@ These are gitignored, so a clone won't have them:
 
 ```
 .env
-sql_config.yml
 resources/configs/sql_config.yml
 resources/anon/anon_manager.json
 resources/anon/anon_manager_platform.json
@@ -537,11 +536,20 @@ resolves the sources against the working directory
 ```bash
 cd /home/weezy/activity/WojBot
 rsync -av --relative \
-  .env sql_config.yml \
+  .env \
   resources/configs/sql_config.yml \
   resources/anon/ resources/ratings/ \
   wojingtonpost:activity/WojBot/
 ```
+
+**The repo-root `sql_config.yml` is deliberately not in that list.** Nothing
+reads it: `resources/configs/sys_config.yml` sets `sql_config_name`, and
+`EloSystem` resolves that against its `configs_dir`, which is
+`resources/configs/` — never the repo root. The root copy is a leftover from an
+older layout that still holds a working `pylot` password aimed at
+`thegoldenunasinn`, so copying it would put a live credential and a stale
+hostname on the new box for no reason at all. Leave it behind, and consider
+deleting it on the workstation too.
 
 **`resources/anon/` is not optional.** Those are the anonymizer's reversal maps.
 Without them rumors print `manager_18` instead of a name, and — worse — the next
@@ -555,9 +563,10 @@ silently repoints names on rows that are already there.
 **Do not copy** `sql/manager.log.json` or `sql/queries/_queries.json`. They
 regenerate, and a stale log makes the bot skip registering the query files.
 
-Note that `.env` and both `sql_config.yml` files arrive on the new Pi still
-naming `thegoldenunasinn`. Step 6 is where that gets fixed, and it has to happen
-**before the first start**, not after — see the warning at the top of this guide.
+Note that `.env` and `resources/configs/sql_config.yml` arrive on the new Pi
+still naming `thegoldenunasinn`. Step 6 is where that gets fixed, and it has to
+happen **before the first start**, not after — see the warning at the top of this
+guide.
 
 If `resources/anon/discord_ids.json` exists by then, it is the **most important
 file in the transfer** — it is the only place the mapping from real Discord IDs
@@ -569,25 +578,26 @@ to the surrogates stored in `dim_league.discord_server_id` and
 
 Everything in this step is **[ NEW PI ]**, in `~/activity/WojBot`.
 
-**Three files name the database host, not one.** All of them came across in step
-5 pointing at `thegoldenunasinn`, and with the old board still serving Postgres
-every one of them is a live route back to the stale warehouse:
+**Two files name the database host, not one.** Both came across in step 5
+pointing at `thegoldenunasinn`, and with the old board still serving Postgres
+each is a live route back to the stale warehouse:
 
 | file | read by | what to do |
 |---|---|---|
 | `.env` | the bot's `SqlService` | switch to the `SQL_*` fields, below |
 | `resources/configs/sql_config.yml` | `EloSystem` → `EloSQL` | set `conn_uri` to `127.0.0.1` |
-| `sql_config.yml` (repo root) | nothing on this path | correct it or delete it |
 
-The middle one is the one that gets missed. `resources/configs/sys_config.yml`
-sets `sql_config_name: sql_config.yml`, and `EloSystem` resolves that against its
+The second is the one that gets missed. `resources/configs/sys_config.yml` sets
+`sql_config_name: sql_config.yml`, and `EloSystem` resolves that against its
 `configs_dir` — which is `resources/configs/`, not the repo root. `EloSQL`
 validates and stores that URI even when the bot hands it a live connection to
 reuse (`wojbot/core/elo.py`), and the bot only hands one over when it *has* one.
 So the host in that file can genuinely be dialled.
 
-The root `sql_config.yml` is on nobody's read path, but it holds the same string,
-and a second copy of a wrong hostname is a trap for whoever reads this next.
+The workstation also has a repo-root `sql_config.yml` naming the same host. It
+is on nobody's read path and step 5 deliberately doesn't copy it, so there is
+nothing to fix here — but the `grep` below will still flag it on the
+*workstation* if you ever run it there.
 
 Now `.env`: comment out `SQL_CONN_URI` and use the fields, which is what the
 commented block at the bottom of the file is for.
@@ -642,7 +652,7 @@ grep -rn thegoldenunasinn ~/activity/WojBot --exclude-dir=.git --exclude-dir=.ve
 ```
 
 Anything this prints outside `docs/` is a route back to the stale warehouse.
-Expect no hits at all once the three files above are done.
+Expect no hits at all once the two files above are done.
 
 ## 7. Run it as a service
 
