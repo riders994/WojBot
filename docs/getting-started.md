@@ -1,7 +1,8 @@
 # Getting started
 
-> Moving an existing install to a Raspberry Pi? See
-> [deploying-to-a-pi.md](deploying-to-a-pi.md).
+> Moving an existing install to a host of its own? See
+> [deploying-to-ec2.md](deploying-to-ec2.md) for EC2, or
+> [deploying-to-a-pi.md](deploying-to-a-pi.md) for a Raspberry Pi.
 
 How to stand WojBot up and bring a league onto it. If you run more than one
 league, each has its own Discord server and you do the [per-server

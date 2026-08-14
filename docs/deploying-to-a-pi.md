@@ -1,5 +1,11 @@
 # Moving to a new Pi
 
+> **This move is done** — the bot and the warehouse both run on `wojingtonpost`.
+> Kept for the reasoning, and because the restore, the systemd unit and the
+> two-warehouse hazard all recur. Moving on from the Pi to EC2 is
+> [deploying-to-ec2.md](deploying-to-ec2.md), which picks up from where this one
+> ends.
+
 Notes for putting the bot and the warehouse on one fresh Raspberry Pi. Written
 against the current setup: bot on the x86_64 workstation, Postgres 13 on
 `thegoldenunasinn` (192.168.1.165), a 32-bit Raspberry Pi OS bullseye box.
