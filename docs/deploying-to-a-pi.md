@@ -725,9 +725,9 @@ Expect no hits at all once the two files above are done.
 ```ini
 [Unit]
 Description=WojBot
-After=network-online.target postgresql.service
+After=network-online.target nss-lookup.target time-sync.target postgresql@17-main.service
 Wants=network-online.target
-Requires=postgresql.service
+Requires=postgresql@17-main.service
 
 [Service]
 Type=simple
@@ -735,7 +735,7 @@ User=piders994
 WorkingDirectory=/home/piders994/activity/WojBot
 ExecStart=/home/piders994/activity/WojBot/.venv/bin/wojbot
 Restart=always
-RestartSec=10
+RestartSec=30
 
 [Install]
 WantedBy=multi-user.target
@@ -744,6 +744,14 @@ WantedBy=multi-user.target
 `User=` and both paths assume the OS account is `piders994`; fix all three
 together if it isn't. Note the unit runs on the Pi, so `weezy` — the
 workstation's account — is never the right answer here.
+
+**`postgresql@17-main.service` carries the cluster version** — that's the `17` on
+trixie, `15` on bookworm, which is the number step 2 told you to note. Substitute
+yours, and don't fall back to plain `postgresql.service`: on Debian that's a
+wrapper whose entire job is `ExecStart=/bin/true`, so it reports success the
+instant systemd looks at it, whether or not a cluster ever came up. A `Requires=`
+on it is a dependency that cannot fail, which is the same as no dependency at
+all. `pg_lsclusters` prints the version if you didn't write it down.
 
 **[ NEW PI ]**
 
@@ -758,6 +766,36 @@ Discord token, and two instances on one token against two different warehouses
 is precisely the divergence this guide exists to avoid. Step 8 performs the only
 start, in the right order.
 
+### `systemctl cat` shows the file, not what systemd made of it
+
+Worth understanding before you trust the unit, because the failure it hides is
+silent and only shows up months later during an outage.
+
+`systemctl cat` prints the bytes on disk. It does not tell you whether systemd
+*accepted* them. Directive values are case-sensitive and validated, so a
+capitalised `Restart=Always` is not a near-miss that systemd charitably
+interprets — it's an invalid value. systemd logs a parse warning at load time,
+discards the line, and leaves the setting at its default, which for `Restart=` is
+`no`. The unit then looks exactly right in `systemctl cat` and has no restart
+policy whatsoever.
+
+That combination is quiet for as long as the bot never crashes, and then costs
+you a full outage: a service that should have retried in 30 seconds stays
+`failed` until someone notices Discord has gone silent.
+
+Check what systemd actually parsed, not what you typed:
+
+**[ NEW PI ]**
+
+```bash
+systemctl show wojbot -p Restart -p RestartSec -p Requires -p After
+```
+
+`Restart=always` is the answer. `Restart=no` means the line was rejected — and
+`journalctl -b -u wojbot | grep -i 'restart setting'` will have said so at load
+time. The same check works for any directive you're unsure of; `systemctl show`
+with no `-p` dumps every property with its effective value.
+
 **`WorkingDirectory` is load-bearing**, and its failure mode is misleading.
 `load_dotenv()` finds `.env` relative to the current directory, so a unit
 without it starts in `/` and dies with:
@@ -770,13 +808,57 @@ ConfigError: DISCORD_TOKEN is not set. Copy .env.example to .env and fill it in
 under `resources/` are fine either way: `PROJECT_ROOT` is derived from the
 installed package location, not the working directory.)
 
-**Mind the clock.** Postgres is now the machine stamping `reported_at` on every
-rumor, so if the bot writes before NTP settles those timestamps are wrong. The
-Pi 5 does have a real-time clock, but the battery for it is a separate purchase
-and it keeps no time without one — so treat the clock as NTP-dependent unless
-you've fitted the battery to the RTC connector. `After=network-online.target`
-doesn't cover this; add `After=time-sync.target` and `sudo systemctl enable
-systemd-time-wait-sync` if you see it happen.
+### Booting after a power cut is the case to design for
+
+This is the one that bites, because it's the one boot you don't watch. The power
+comes back to the whole house at once and the Pi — SSD, no spinning disk, nothing
+to wait for — is up in seconds, while the FiOS gateway is still negotiating with
+the street. The bot starts, tries to reach Discord, and gets no DNS:
+
+```
+aiohttp.client_exceptions.ClientConnectorDNSError:
+  Cannot connect to host discord.com:443 ssl:default [name resolution]
+```
+
+Under a second from `ExecStart` to exit. `network-online.target` doesn't prevent
+it: that target means an interface has an address, which is exactly how the bot
+got far enough to attempt a lookup at all. Name resolution being usable is
+`nss-lookup.target`, which is why both are in the unit above.
+
+**But no amount of ordering fully wins this race**, and it's worth being clear
+about why: every target on the Pi describes the state of the *Pi*. If the
+resolver is up and answering, `nss-lookup.target` is reached — whether or not the
+gateway it forwards to has finished booting. Nothing local can order against
+someone else's hardware.
+
+`Restart=always` is what actually covers it. `RestartSec=30` retries until the
+rest of the network catches up, and turns a power cut into thirty seconds of
+downtime instead of however long it takes you to notice. That's also why the
+`systemctl show` check above matters more than it looks: this is the scenario
+where a `Restart=` that silently failed to parse costs you the whole outage.
+
+Thirty seconds is deliberate, and not only for politeness toward the gateway. It
+also keeps you clear of systemd's start rate limiter — the default
+`StartLimitBurst=5` counts starts within a `StartLimitIntervalSec=10s` window, so
+retries spaced wider than the window never accumulate. Tighten `RestartSec` below
+10 and a crash-looping bot will trip the limiter and be left `failed`
+permanently, which is the failure you were trying to avoid.
+
+**Mind the clock too.** Postgres is now the machine stamping `reported_at` on
+every rumor, so if the bot writes before NTP settles those timestamps are wrong —
+and a post-outage boot is precisely when the clock is furthest off. The Pi 5 does
+have a real-time clock, but the battery for it is a separate purchase and it
+keeps no time without one, so treat the clock as NTP-dependent unless you've
+fitted the battery to the RTC connector. `After=time-sync.target` is in the unit
+above for this; it only does its job if something is actually waiting on that
+target, so pair it with:
+
+**[ NEW PI ]**
+
+```bash
+sudo systemctl enable systemd-time-wait-sync
+timedatectl        # "System clock synchronized: yes" once it has settled
+```
 
 Nothing is running on the new Pi yet, so you can stop here for as long as you
 like. Steps 1–7 leave the workstation bot untouched and in charge; step 8 is the
@@ -851,6 +933,79 @@ Its config still names `thegoldenunasinn` — the very thing
 that makes a missed config dangerous during the move is what makes the rollback
 trivial. Rumors reported through the new Pi in between live only in the new
 warehouse; if that matters, dump `fact_rumor` from it before you turn it off.
+
+---
+
+## The bot is down and the Pi is up
+
+Once the move is done, this is the shape almost every incident takes: the Pi
+answers ping, the bot is absent from Discord. Work outward from the unit, not
+from the network — the network is the thing you can see, which makes it the thing
+you're tempted to blame.
+
+**[ NEW PI ]**
+
+```bash
+systemctl status wojbot --no-pager -l
+journalctl -u wojbot -n 50 --no-pager
+systemctl show wojbot -p Restart -p NRestarts
+```
+
+The status header alone usually settles it, and the field to read first is
+`Active:` — specifically its timestamp. **A failure timestamp that matches the
+Pi's boot time is a different bug from one that doesn't.** `uptime` gives you the
+comparison.
+
+| what you see | what it means |
+|---|---|
+| `failed`, timestamp ≈ boot, DNS error in the log | the power-cut race in step 7. Check `Restart` actually parsed |
+| `failed`, timestamp ≈ boot, `ConfigError: DISCORD_TOKEN is not set` | `WorkingDirectory` — see step 7 |
+| `failed`, timestamp long after boot | a real crash. The traceback is in `journalctl` |
+| `inactive (dead)`, never started | the unit isn't enabled: `systemctl is-enabled wojbot` |
+| `active (running)` but silent in Discord | not a Pi problem. Token, gateway, or permissions |
+
+`NRestarts=0` next to a `failed` service is the tell that no restart policy is in
+force — go back to the `systemctl show` check in step 7.
+
+Once you know why, the recovery is two commands. `reset-failed` clears the
+latched failure state, without which a service parked at its start limit refuses
+to start at all:
+
+```bash
+sudo systemctl reset-failed wojbot
+sudo systemctl start wojbot
+```
+
+Note what is *not* on this list: `pg_lsclusters`, `psql`, connectivity to the
+warehouse. Since step 6 the database is on loopback, so it is nearly never the
+answer, and `SQL connected` appears in the bot's own startup log within a second
+of launch if you want it confirmed. Checking Postgres first is a habit left over
+from when the two boxes were separate.
+
+### Diagnosing it from the workstation
+
+You can get a surprising distance without logging in, which is useful when the
+Pi is reachable but ssh isn't cooperating:
+
+**[ WORKSTATION ]**
+
+```bash
+ssh-keyscan -T 5 192.168.50.60 2>/dev/null | ssh-keygen -lf -
+ssh -v wojingtonpost hostname 2>&1 | grep -E 'Server host key|matches|denied'
+```
+
+A host key that matches `~/.ssh/known_hosts` proves it's the same machine and not
+a device that inherited the address from DHCP — which is the first thing to rule
+out, and the reason step 2 asks for a reservation. If it matches and key auth is
+still refused, the problem is `~piders994/.ssh/authorized_keys` on the Pi, not the
+network; log in with a password and check it. An `authorized_keys` that is zero
+bytes means `ssh-copy-id` in step 2 never actually ran — easy to miss, because
+every `scp` and `rsync` in this guide still works, just with a password prompt
+each time.
+
+Don't read anything into `psql` refusing a connection from here. Step 6 set
+`listen_addresses = 'localhost'`, so a refused 5432 is the configuration working
+as designed and says nothing about whether the cluster is up.
 
 ---
 
