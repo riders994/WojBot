@@ -817,7 +817,9 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/activity/WojBot
 Environment=AWS_DEFAULT_REGION=us-east-1
+ExecStartPre=-/usr/local/bin/wojbot-update
 ExecStart=/usr/local/bin/wojbot-run
+TimeoutStartSec=300
 Restart=always
 RestartSec=30
 
@@ -864,6 +866,143 @@ discards the line, and leaves `Restart=no`. The unit then looks perfect in `cat`
 and has no restart policy at all, which is quiet until the first crash and then
 costs you a full outage. `Restart=always` in the `show` output is the answer;
 `Restart=no` means go read `journalctl -b -u wojbot | grep -i 'restart setting'`.
+
+### Updating the checkout on start
+
+`ExecStartPre=` runs before `ExecStart=` in the same service, as the same user,
+and that's the hook for pulling the latest code and reconciling the venv against
+`requirements.lock` before the bot comes up. It makes `systemctl restart wojbot`
+your deploy command.
+
+Two things about this unit make the naive version actively worse than no updater
+at all, and both are why the script below is shaped the way it is.
+
+**A failed `ExecStartPre` fails the whole unit.** By default, if the pre-command
+exits non-zero, systemd never runs `ExecStart` and the service goes to `failed`.
+So a `git pull` in front of this bot means **GitHub being unreachable stops the
+bot from starting** — even though a perfectly good checkout is sitting on the
+disk. That is precisely the post-outage boot the unit was hardened against,
+re-introduced through the front door. Unreachable network at boot must mean
+"start what we've got", never "don't start".
+
+**`ExecStartPre` runs on automatic restarts too**, not just the ones you type.
+With `Restart=always` and `RestartSec=30`, a crash-looping bot fetches every 30
+seconds — and worse, a bad commit that crashes on startup will be pulled in and
+retried forever rather than leaving the last good code running.
+
+So: the script never exits non-zero, and it rolls the checkout back rather than
+starting the bot against a venv it failed to build.
+
+**[ EC2 ]** — `/usr/local/bin/wojbot-update`
+
+```bash
+#!/usr/bin/env bash
+# Fast-forward the checkout and reconcile the venv before the bot starts.
+#
+# Exits 0 unconditionally. Every failure here means "start the code already on
+# disk", which is always a better outcome than not starting: an unreachable
+# GitHub at boot must not be able to keep the bot down.
+set -uo pipefail
+
+REPO=/home/ubuntu/activity/WojBot
+BRANCH=primary
+
+cd "$REPO" || exit 0
+before=$(git rev-parse HEAD)
+
+# BatchMode + a hard timeout: a prompt or a black-holed connection would
+# otherwise hang here until TimeoutStartSec kills the whole start.
+export GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=10"
+export GIT_TERMINAL_PROMPT=0
+
+if ! timeout 60 git fetch --quiet origin "$BRANCH"; then
+    echo "fetch failed — starting $before as it is"
+    exit 0
+fi
+
+if ! git -c advice.diverging=false merge --ff-only --quiet "origin/$BRANCH"; then
+    echo "not a fast-forward (local commits, or a dirty tree) — starting $before"
+    exit 0
+fi
+
+after=$(git rev-parse HEAD)
+if [[ "$before" == "$after" ]]; then
+    echo "already current at $after"
+    exit 0
+fi
+echo "updated $before -> $after"
+
+# Only touch the venv when something that describes it actually changed.
+if ! git diff --quiet "$before" "$after" -- requirements.lock pyproject.toml; then
+    echo "dependencies changed — reinstalling"
+    if ! .venv/bin/pip install --quiet -r requirements.lock \
+      || ! .venv/bin/pip install --quiet -e . --no-deps; then
+        echo "pip failed — rolling back to $before and starting that"
+        git reset --hard --quiet "$before"
+    fi
+fi
+exit 0
+```
+
+```bash
+sudo install -o root -g root -m 755 wojbot-update /usr/local/bin/wojbot-update
+```
+
+The pieces that matter:
+
+**`ExecStartPre=-/usr/local/bin/wojbot-update`** — the leading `-` tells systemd
+to ignore a non-zero exit. The script already never returns one, so this is
+belt-and-braces for the cases the script can't cover: it's missing, it's not
+executable, or somebody edits it later and breaks the `exit 0`.
+
+**`git merge --ff-only`, not `git pull`.** A plain `pull` on a diverged branch
+drops you into a merge — or a conflicted tree — inside a systemd start. `--ff-only`
+refuses instead, and refusing is logged and survivable. This also means a
+deliberate local edit on the box is respected rather than silently reverted:
+you'll see "not a fast-forward" in the journal and know exactly why the deploy
+didn't take.
+
+**The rollback on pip failure.** Starting the bot against a half-installed venv
+is the one outcome worse than not updating, so a failed install returns the
+checkout to the commit that matched the venv you already have. `git reset --hard`
+is safe for everything in step 7: it doesn't touch untracked or gitignored
+files, so `resources/anon/`, `resources/ratings/` and the per-guild configs are
+never at risk.
+
+**The `git diff` guard on `requirements.lock` and `pyproject.toml`.** The venv is
+an editable install, so ordinary code changes are picked up with no pip
+involvement at all. Running pip on every start would add seconds to each restart
+to do nothing; running it only when the files that define the environment changed
+means a normal deploy is a fetch and a fast-forward.
+
+**`TimeoutStartSec=300`** in the unit. The default is 90 seconds and it covers
+`ExecStartPre` plus `ExecStart` together. A cold `pip install` that has to build
+or download much of the lock will blow through 90s and get the start killed
+partway through — leaving exactly the broken venv the rollback exists to
+prevent.
+
+Check it end to end before you rely on it:
+
+```bash
+sudo systemctl restart wojbot
+journalctl -u wojbot -n 30 --no-pager | grep -E 'updated|current|failed|rolling'
+```
+
+#### Know what you've signed up for
+
+This makes **restart mean deploy**, and those are two things you often want
+separately. Restarting to clear a stuck gateway connection at 1am now also ships
+whatever landed on `primary` since the last start, which is a surprise at the
+worst possible time. If that trade bothers you — and it reasonably might — drop
+`ExecStartPre` and run the same script deliberately instead:
+
+```bash
+sudo /usr/local/bin/wojbot-update && sudo systemctl restart wojbot
+```
+
+or put it on a timer that only restarts when the commit actually moved, which
+gets you unattended deploys without coupling them to every crash recovery. The
+script is written to be safe in all three modes; only the unit line changes.
 
 ### What `Restart=always` is actually covering here
 
