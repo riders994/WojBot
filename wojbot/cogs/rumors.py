@@ -17,6 +17,13 @@ they are rather than from where they typed, and a manager in more than one *this
 season* gets asked which. Leagues they have left are not offered — there is
 nothing to report in one, and the choice is noise.
 
+Being exempt from ``guild_only`` is also why this module asks about the
+Restricted tier itself. The tree check in :mod:`wojbot.bot` enforces it for
+every other command, but it can only read the server the command was typed in,
+and in a DM there isn't one. A restricted member who is shut out of ``/rumor``
+in the league's server would otherwise get the whole wizard by opening a DM --
+so once the league is known, its server is asked. See :func:`refuse_if_restricted`.
+
 The rules about which sources may carry which release types, and the format
 strings both are written in, live in :mod:`wojbot.core.rumor`.
 """
@@ -30,7 +37,11 @@ from discord import app_commands
 from discord.ext import commands
 
 from ..core import rumor as rumors
-from ..core.checks import VERIFIED_ROLES_KEY, has_privilege_in_guild
+from ..core.checks import (
+    VERIFIED_ROLES_KEY,
+    has_privilege_in_guild,
+    is_restricted_in_guild,
+)
 from ..core.format import chunk
 from ..core.rumor import RUMOR_CHANNEL_KEY
 
@@ -42,6 +53,45 @@ DEFAULT_RECENT = 5
 # database. Setting it on the TextInput too just means the reporter finds out
 # while they are still typing rather than at the review step.
 MAX_RUMOR_LENGTH = rumors.MAX_RUMOR_LENGTH
+
+
+def league_guild_id(league: rumors.League, invoking_guild_id: int | None) -> int | None:
+    """Which server's roles decide what a reporter may do with ``league``.
+
+    The league's own, when it has one. A rumor is reported *into* a league, so
+    the permissions that apply are that league's server's -- not those of
+    whichever server the command happened to be typed in, and in a DM there is
+    no other candidate anyway. A league never bound by the bot has no server of
+    its own, which is the only case the invoking one is used for.
+    """
+    return league.guild_id or invoking_guild_id
+
+
+async def refuse_if_restricted(
+    bot,
+    league: rumors.League,
+    user,
+    invoking_guild_id: int | None = None,
+    *,
+    action: str = "report there",
+) -> str | None:
+    """The refusal for somebody restricted in ``league``, or None to proceed.
+
+    A message rather than a bool because every caller has to say something, and
+    naming the league is the difference between a refusal somebody understands
+    and one that looks like a bug -- in a DM there is nothing on screen to say
+    which server turned them away. ``action`` is what they were trying to do,
+    since the same rule stops both halves of the command.
+    """
+    guild_id = league_guild_id(league, invoking_guild_id)
+    if await is_restricted_in_guild(bot, guild_id, user):
+        return (
+            f"You're restricted in **{league.name}**'s server, so you can't "
+            f"{action} — including from here. A server admin can lift it with "
+            "`/verify remove`."
+        )
+    return None
+
 
 # Release types climb from level 0 (idle talk) to 5 (the league speaking), and
 # the colour climbs with them so the weight of one reads before the words do.
@@ -143,6 +193,9 @@ class RumorWizard(discord.ui.View):
         self.league: rumors.League | None = None
         self.reporter: rumors.Reporter | None = None
         self.privileged = False
+        # The refusal for a reporter restricted in the bound league, or None.
+        # Set by set_league alongside privileged, from the same server.
+        self.restriction: str | None = None
 
         self.release: rumors.ReleaseType | None = None
         self.source: rumors.SourceType | None = None
@@ -190,11 +243,21 @@ class RumorWizard(discord.ui.View):
 
         if len(view.leagues) == 1:
             await view.set_league(view.leagues[0])
+            if view.restriction:
+                # Raised rather than rendered: with one league there is nothing
+                # to pick instead, so there is no wizard worth showing.
+                raise RumorError(view.restriction)
         view._render()
         return view
 
     async def set_league(self, league: rumors.League) -> None:
-        """Bind the wizard to a league, resolving who the reporter is in it."""
+        """Bind the wizard to a league, resolving what the reporter may do in it.
+
+        Both questions are asked of the league's own server (see
+        :func:`league_guild_id`), and both are re-asked on every league change:
+        being trusted in one league says nothing about another, and neither does
+        being shut out of one.
+        """
         self.league = league
         self.reporter = await rumors.resolve_reporter(self.bot, self.manager_id, league)
         # The Commissioner is a source you have to be trusted with, and trust is
@@ -202,9 +265,12 @@ class RumorWizard(discord.ui.View):
         # league's own server that decides.
         self.privileged = await has_privilege_in_guild(
             self.bot,
-            league.guild_id or self.invoking_guild_id,
+            league_guild_id(league, self.invoking_guild_id),
             self.user,
             VERIFIED_ROLES_KEY,
+        )
+        self.restriction = await refuse_if_restricted(
+            self.bot, league, self.user, self.invoking_guild_id
         )
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -355,11 +421,19 @@ class RumorWizard(discord.ui.View):
             # Team and display name change with the league, and so does who may
             # speak as the Commissioner -- everything downstream is stale.
             self.release = self.source = self.form = None
-            self.note = "" if self.reporter else (
-                f"⚠️ You have no team in **{league.name}**, so there's no front "
-                "office to speak for. Pick another league."
-            )
-            if self.reporter:
+            # Restriction first: it is the one that isn't about having a team,
+            # and a reporter shut out of a league should hear that rather than
+            # be told to check their roster.
+            if self.restriction:
+                self.note = f"⚠️ {self.restriction} Pick another league."
+            elif not self.reporter:
+                self.note = (
+                    f"⚠️ You have no team in **{league.name}**, so there's no "
+                    "front office to speak for. Pick another league."
+                )
+            else:
+                self.note = ""
+            if self.reporter and not self.restriction:
                 self.step += 1
             self._render()
             await interaction.edit_original_response(embed=self._embed(), view=self)
@@ -523,6 +597,18 @@ class RumorWizard(discord.ui.View):
 
     async def _submit(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
+        # Asked again rather than trusted from set_league: the wizard sits open
+        # for five minutes, and a restriction applied while it was open has to
+        # land before the rumor does, not after.
+        self.restriction = await refuse_if_restricted(
+            self.bot, self.league, self.user, self.invoking_guild_id
+        )
+        if self.restriction:
+            self.note = f"⚠️ {self.restriction}"
+            self.clear_items()
+            self.stop()
+            await interaction.edit_original_response(embed=self._embed(), view=self)
+            return
         try:
             rumor_id, _reported_at = await rumors.record_rumor(
                 self.bot,
@@ -715,7 +801,14 @@ class Rumors(commands.Cog):
     async def _resolve_league(
         self, interaction: discord.Interaction, name: str | None
     ) -> rumors.League:
-        """Which league the caller means, from the server or from who they are."""
+        """Which league the caller means, from the server or from who they are.
+
+        The league a DM resolves to brings its server's restrictions with it.
+        In a server the tree check has already had its say, so only the DM path
+        asks -- the reading half of the same rule the wizard applies to
+        reporting: a wire somebody is shut out of isn't one they get to read
+        from somewhere else.
+        """
         if interaction.guild_id is not None:
             found = await rumors.league_for_guild(self.bot, interaction.guild_id)
             if found is None:
@@ -738,14 +831,22 @@ class Rumors(commands.Cog):
                 "league's own server and I'll know which wire you mean."
             )
         if name:
-            match = next((lg for lg in leagues if lg.name == name), None)
-            if match is None:
+            target = next((lg for lg in leagues if lg.name == name), None)
+            if target is None:
                 raise RumorError(f"You're not in a league called **{name}** this season.")
-            return match
-        if len(leagues) > 1:
+        elif len(leagues) > 1:
             names = ", ".join(f"**{lg.name}**" for lg in leagues)
             raise RumorError(f"You're in more than one league — say which: {names}.")
-        return leagues[0]
+        else:
+            target = leagues[0]
+
+        refusal = await refuse_if_restricted(
+            self.bot, target, interaction.user, interaction.guild_id,
+            action="read its rumors",
+        )
+        if refusal:
+            raise RumorError(refusal)
+        return target
 
     @recent.autocomplete("league")
     async def _league_autocomplete(

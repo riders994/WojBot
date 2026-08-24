@@ -278,8 +278,11 @@ async def evaluate_restriction(
     lock the people who fix things out of fixing them.
 
     In a DM there is no server whose restriction could apply, so nobody is
-    restricted. A DM-initiated flow that acts on one league should ask this
-    again with that league's guild id once it knows it.
+    restricted. A DM-initiated flow that acts on one league has to ask this
+    again with that league's guild id once it knows it -- ``/rumor`` is the one
+    such flow, and does; see
+    :func:`wojbot.cogs.rumors.refuse_if_restricted`. A command that is
+    ``guild_only`` never has to think about this.
     """
     if await bot.is_owner(user):
         return PrivilegeResult(False, REASON_OWNER, asked_tier=RESTRICTED_ROLES_KEY)

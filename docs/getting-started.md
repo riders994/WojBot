@@ -218,6 +218,12 @@ before the command's own permissions, so it never has to out-argue a grant. It's
 enforced once for the whole command tree rather than per command, which is why a
 command added later is covered without anyone marking it.
 
+**A DM isn't a way round it.** The tree check can only read the server a command
+was typed in, and `/rumor` — the one group that works in a DM — would otherwise
+let somebody shut out of a league report into it from a private window. It asks
+the league's own server once it knows which league is meant, for reporting and
+for reading alike.
+
 A role belongs in **one** list, the highest that should hold it — Admin already
 passes every Verified check, so listing it twice only invites somebody to remove
 it from one and assume the other still covers it.
