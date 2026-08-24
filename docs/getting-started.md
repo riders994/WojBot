@@ -11,7 +11,7 @@ setup](#2-set-up-each-league-server) once in each.
 The short version, run in the league's server:
 
 ```
-/setup wizard          → roles, league, rumor channel
+/setup wizard          → roles, league, channels, dad jokes
 /commish db migrate    → this server now owns the league in the database
 /commish db managers   → see who's in it
 /commish db linkuser   → attach each Discord user to their manager
@@ -98,38 +98,40 @@ Walks a few steps on one message:
 2. **League** — which configured league this server drives. The options come
    from `resources/configs/sys_config.yml`. Picking one loads it, exactly as
    `/commish load` would.
-3. **Rumor channel** — where `/rumor report` announces to. **League servers
+3. **Default channel** — where the bot's own output goes: the things that
+   aren't the rumor wire. Asked of every server, league or not. A quiet,
+   muted channel is usually the right answer — somebody pulling a report for
+   the league shouldn't have to ping everyone to read it.
+4. **Rumor channel** — where `/rumor report` announces to. **League servers
    only:** the step is there if the server is already bound to a league, or as
    soon as step two binds it. A server that runs no league has no rumors to
    post, and the same goes for `/setup rumorchannel`, which declines.
-4. **Dad jokes** — on, off, or follow the bot-wide default.
+5. **Dad jokes** — on, off, or follow the bot-wide default.
 
 Every step is optional and you can re-run the wizard, or set any one of them
-later with `/verify add`, `/commish load`, `/setup rumorchannel`, and
-`/setup dadjokes`.
+later with `/verify add`, `/commish load`, `/setup defaultchannel`,
+`/setup rumorchannel`, and `/setup dadjokes`.
 
-The wizard doesn't cover the two settings below — they're neither part of
-getting a league running nor something to decide while onboarding.
+**The default and rumor channels are separate settings and can be separate
+channels.** A wire people open to read gossip is not necessarily where a notice
+or a report belongs, and a server may want either without the other.
 
-### 2a-ii. The default channel, and restart notices
+### 2a-ii. Restart notices
 
 ```
-/setup defaultchannel channel:#general    → where the bot speaks to this server
-/setup restartnotices state:On            → subscribe to restart announcements
+/setup restartnotices state:On    → this server hears when the bot comes back
 ```
 
-**The default channel is where the bot addresses the server itself**, as against
-the rumor channel, which is where a league's gossip goes. They're separate
-settings and can be separate channels: a wire people go to read is not
-necessarily where a notice belongs, and a server may want one and not the other.
-A server that runs no league can still have a default channel.
+Off until a server asks, and deliberately not in the wizard: it's not part of
+getting a league running, and it's the one setting here that makes the bot
+speak unprompted. Subscribed, the server gets one line in its **default
+channel** each time the bot comes back — both the restarts it was asked for and
+the ones it wasn't, drawn from the same lists the owner's DM uses
+(`resources/restart_messages.json`).
 
-**Restart notices are off until a server asks for them.** Subscribed, the server
-gets one line in its default channel each time the bot comes back — both the
-restarts it was asked for and the ones it wasn't, drawn from the same lists the
-owner's DM uses (`resources/restart_messages.json`). The two settings are
-independent, so turning notices on without a channel subscribes you to nothing;
-`/setup restartnotices` says so at the time, and `/setup show` keeps saying it.
+The two settings are independent, so turning notices on without a default
+channel subscribes you to nothing; `/setup restartnotices` says so at the time,
+and `/setup show` keeps saying it.
 
 ### 2b. `/commish db migrate`
 

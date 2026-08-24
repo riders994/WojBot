@@ -219,10 +219,15 @@ class SetupWizard(discord.ui.View):
         that reads like a working one. Binding a league at the step before adds
         it, which is why the list is rebuilt on every render rather than fixed
         when the wizard starts.
+
+        The default channel is asked of everybody, and asked *before* the rumor
+        channel: it is the general one, and a server that runs no league still
+        wants somewhere for the bot to talk to it.
         """
         steps: list[tuple[str, object, object]] = [
             ("Privileged roles", self._step_roles, self._body_roles),
             ("League", self._step_league, self._body_league),
+            ("Default channel", self._step_default, self._body_default),
         ]
         if self.is_league:
             steps.append(("Rumor channel", self._step_rumors, self._body_rumors))
@@ -275,6 +280,26 @@ class SetupWizard(discord.ui.View):
             "server drives a league; skip it if this one doesn't."
         )
         return f"{current}\n\nPick the Elo league this server drives.{note}"
+
+    def _body_default(self) -> str:
+        # Branching rather than dropping describe_channel's "not set" into a
+        # sentence, which reads as a bug -- same reason _body_league branches.
+        stored = self.bot.configs.get_guild(self.guild.id).get(DEFAULT_CHANNEL_KEY)
+        current = (
+            "The bot has nowhere to speak to this server yet."
+            if stored is None else
+            "The bot speaks to this server in "
+            f"{describe_channel(self.bot.configs, self.guild, DEFAULT_CHANNEL_KEY)}."
+        )
+        return (
+            f"{current}\n\nPick where the "
+            "bot's own output goes — the things that aren't the rumor wire. A "
+            "quiet channel is the right answer: somebody pulling a report for "
+            "the league shouldn't have to ping everyone to read it.\n\n"
+            "Separate from the rumor channel on purpose, and it can be a "
+            "different one. Skip it and the bot simply has nowhere to volunteer "
+            "anything."
+        )
 
     def _body_rumors(self) -> str:
         current = describe_channel(self.bot.configs, self.guild, RUMOR_CHANNEL_KEY)
@@ -362,6 +387,31 @@ class SetupWizard(discord.ui.View):
 
             select.callback = callback
             self.add_item(select)
+        self.add_item(_NextButton(self, "Next ›"))
+
+    # --- step: default channel ---------------------------------------------
+
+    def _step_default(self) -> None:
+        select = discord.ui.ChannelSelect(
+            placeholder="Channel for the bot's own messages",
+            channel_types=[discord.ChannelType.text],
+            min_values=0,
+            max_values=1,
+        )
+
+        async def callback(interaction: discord.Interaction, select=select):
+            if not select.values:
+                self._render()
+                await interaction.response.edit_message(embed=self._embed(), view=self)
+                return
+            channel = select.values[0]
+            self.bot.configs.set_guild(self.guild.id, {DEFAULT_CHANNEL_KEY: channel.id})
+            self.done.append(f"The bot will speak to this server in {channel.mention}")
+            self._render()
+            await interaction.response.edit_message(embed=self._embed(), view=self)
+
+        select.callback = callback
+        self.add_item(select)
         self.add_item(_NextButton(self, "Next ›"))
 
     # --- step: rumor channel (league servers only) -------------------------
