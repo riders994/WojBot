@@ -39,7 +39,12 @@ TOPICS: dict[str, tuple[str, str]] = {
         "to a Discord user automatically. **Until somebody is linked they can't "
         "report rumors.**\n\n"
         "**4. `/setup show`**\nThis server's settings and everything still "
-        "outstanding, each with the command that fixes it."
+        "outstanding, each with the command that fixes it.\n\n"
+        "**Outside the wizard.** `/setup defaultchannel` names where the bot "
+        "speaks to this server — a different thing from the rumor channel, and "
+        "it can be a different channel. `/setup restartnotices state:On` "
+        "subscribes the server to a line there whenever the bot comes back up, "
+        "whether the restart was asked for or not. Off until you ask."
     ),
     "rumors": (
         "Reporting rumors",

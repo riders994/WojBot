@@ -108,6 +108,29 @@ Every step is optional and you can re-run the wizard, or set any one of them
 later with `/verify add`, `/commish load`, `/setup rumorchannel`, and
 `/setup dadjokes`.
 
+The wizard doesn't cover the two settings below — they're neither part of
+getting a league running nor something to decide while onboarding.
+
+### 2a-ii. The default channel, and restart notices
+
+```
+/setup defaultchannel channel:#general    → where the bot speaks to this server
+/setup restartnotices state:On            → subscribe to restart announcements
+```
+
+**The default channel is where the bot addresses the server itself**, as against
+the rumor channel, which is where a league's gossip goes. They're separate
+settings and can be separate channels: a wire people go to read is not
+necessarily where a notice belongs, and a server may want one and not the other.
+A server that runs no league can still have a default channel.
+
+**Restart notices are off until a server asks for them.** Subscribed, the server
+gets one line in its default channel each time the bot comes back — both the
+restarts it was asked for and the ones it wasn't, drawn from the same lists the
+owner's DM uses (`resources/restart_messages.json`). The two settings are
+independent, so turning notices on without a channel subscribes you to nothing;
+`/setup restartnotices` says so at the time, and `/setup show` keeps saying it.
+
 ### 2b. `/commish db migrate`
 
 Adopts the league's existing database row for this server. Run it **after** the
@@ -272,6 +295,11 @@ season's rosters were never scraped.
 **Rumors save but never appear** — no rumor channel, or the bot can't post in
 it. `/setup rumorchannel` re-points it and warns you up front if permissions are
 missing. Rumors filed meanwhile are still recorded.
+
+**The bot came back and said nothing** — restart notices are per-server and off
+by default: `/setup restartnotices state:On`, and `/setup defaultchannel` for
+somewhere to put them. `/setup show` lists both. If they're on and set, check the
+bot can post in that channel; the log says so when it can't.
 
 **No rumor step in the wizard, or `/setup rumorchannel` declines** — the bot
 doesn't think this server runs a league. Bind one with `/commish load` (or the

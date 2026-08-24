@@ -57,6 +57,8 @@ from ..core.elo import (
     configured_league,
     runtime_key,
 )
+from ..core.defaults import DEFAULT_CHANNEL_KEY
+from ..core.restart import RESTART_NOTICE_KEY
 from ..core.rumor import RUMOR_CHANNEL_KEY, league_for_guild
 
 log = logging.getLogger(__name__)
@@ -78,6 +80,11 @@ STATE_CHOICES = [
     app_commands.Choice(name="Off", value=OFF),
     app_commands.Choice(name="Follow the bot default", value=INHERIT),
 ]
+
+# A setting a server owns outright gets the two values and no third: there is no
+# bot-wide default for it to fall back to, and offering "follow the default"
+# where none exists would be a choice that does nothing.
+TOGGLE_CHOICES = STATE_CHOICES[:2]
 
 
 def describe_setting(configs, guild_id: int, key: str) -> str:
@@ -490,6 +497,20 @@ class BotSetup(commands.Cog):
                     f"The rumor channel (`{channel_id}`) no longer exists — "
                     "`/setup rumorchannel`"
                 )
+        # Only worth raising for a server that asked for notices: a default
+        # channel is optional until something wants to use it.
+        if config[RESTART_NOTICE_KEY]:
+            channel_id = config.get(DEFAULT_CHANNEL_KEY)
+            if channel_id is None:
+                steps.append(
+                    "Restart notices are on but there's no default channel — "
+                    "`/setup defaultchannel`"
+                )
+            elif guild.get_channel(channel_id) is None:
+                steps.append(
+                    f"The default channel (`{channel_id}`) no longer exists — "
+                    "`/setup defaultchannel`"
+                )
         sql = getattr(self.bot, "sql", None)
         if sql is None:
             steps.append("No database service — check `SQL_CONN_URI`")
@@ -530,6 +551,14 @@ class BotSetup(commands.Cog):
                 "**Rumor channel:** n/a — this server doesn't run a league"
             )
         lines.append(
+            f"**Default channel:** "
+            f"{describe_channel(self.bot.configs, guild, DEFAULT_CHANNEL_KEY)}"
+        )
+        lines.append(
+            f"**Restart notices:** "
+            f"{'on' if config[RESTART_NOTICE_KEY] else 'off'}"
+        )
+        lines.append(
             f"**Dad jokes:** {describe_setting(self.bot.configs, guild.id, DAD_JOKE_KEY)}"
         )
 
@@ -542,7 +571,8 @@ class BotSetup(commands.Cog):
         )
         embed.set_footer(
             text="Roles: /verify · dad jokes: /dadjokes · league: /commish · "
-                 "rumors: /setup rumorchannel · or walk through it with /setup wizard"
+                 "rumors: /setup rumorchannel · notices: /setup restartnotices · "
+                 "or walk through it with /setup wizard"
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
 
@@ -578,6 +608,82 @@ class BotSetup(commands.Cog):
         )
         await interaction.followup.send(
             f"Reported rumors will post to {channel.mention}.{warning}", ephemeral=True
+        )
+
+    @group.command(
+        name="defaultchannel",
+        description="Set the channel the bot speaks to this server in.",
+    )
+    @app_commands.describe(channel="Where the bot posts notices meant for this server")
+    @is_verified()
+    async def defaultchannel(
+        self, interaction: discord.Interaction, channel: discord.TextChannel
+    ) -> None:
+        self.bot.configs.set_guild(interaction.guild_id, {DEFAULT_CHANNEL_KEY: channel.id})
+        # Same warning as the rumor channel, for the same reason: the setting
+        # saves either way, and a channel the bot can't post in would otherwise
+        # only reveal itself the next time it had something to say.
+        allowed = channel.permissions_for(interaction.guild.me).send_messages
+        warning = (
+            "" if allowed
+            else f"\n\n⚠️ I can't send messages in {channel.mention} — nothing "
+                 "will reach it until that's fixed."
+        )
+        config = self.bot.configs.get_guild(interaction.guild_id)
+        subscribed = (
+            "" if config[RESTART_NOTICE_KEY]
+            else "\n\nNothing posts here yet. `/setup restartnotices state:On` "
+                 "is the one thing that currently uses it."
+        )
+        await interaction.response.send_message(
+            f"I'll speak to this server in {channel.mention}.{warning}{subscribed}",
+            ephemeral=True,
+        )
+
+    @group.command(
+        name="restartnotices",
+        description="Say whether this server hears when the bot restarts.",
+    )
+    @app_commands.describe(state="On to subscribe this server, off to stop")
+    @app_commands.choices(state=TOGGLE_CHOICES)
+    @is_verified()
+    async def restartnotices(
+        self, interaction: discord.Interaction, state: app_commands.Choice[str]
+    ) -> None:
+        guild_id = interaction.guild_id
+        enabled = state.value == ON
+        self.bot.configs.set_guild(guild_id, {RESTART_NOTICE_KEY: enabled})
+        if not enabled:
+            await interaction.response.send_message(
+                "This server won't hear about restarts any more.", ephemeral=True
+            )
+            return
+
+        # Subscribing without somewhere to post is the one way to turn this on
+        # and get nothing, so it is answered here rather than left to be
+        # noticed after the next restart didn't say anything.
+        channel_id = self.bot.configs.get_guild(guild_id).get(DEFAULT_CHANNEL_KEY)
+        if channel_id is None:
+            await interaction.response.send_message(
+                "This server is subscribed — but there's nowhere to post yet. "
+                "Name a channel with `/setup defaultchannel` and the next "
+                "restart will say so there.",
+                ephemeral=True,
+            )
+            return
+        channel = interaction.guild.get_channel(channel_id)
+        if channel is None:
+            await interaction.response.send_message(
+                f"This server is subscribed — but the default channel "
+                f"(`{channel_id}`) no longer exists. Point `/setup "
+                "defaultchannel` at a new one.",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_message(
+            f"This server will hear about restarts in {channel.mention} — "
+            "both the ones I'm asked for and the ones I'm not.",
+            ephemeral=True,
         )
 
     @group.command(name="dadjokes", description="Turn dad jokes on or off for this server.")

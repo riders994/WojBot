@@ -8,6 +8,11 @@ consumes it, so one shutdown produces exactly one announcement.
 
 The lines themselves are data, not code: :data:`MESSAGES_PATH` holds one list
 per reason, and editing that file is the whole of changing what the bot says.
+
+The owner is told by DM whatever happens. A *server* is told only if it asked
+to be: :func:`notify_targets` is the guest list, read from each server's own
+settings. Both hear the same line, because one restart is one event and a bot
+telling two rooms different stories about it reads as two restarts.
 """
 
 from __future__ import annotations
@@ -20,8 +25,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import PROJECT_ROOT
+from .defaults import DEFAULT_CHANNEL_KEY
 
 log = logging.getLogger(__name__)
+
+# Whether a server has asked to hear about restarts. The channel it hears in is
+# its default messaging channel, not a restart-specific one -- see
+# wojbot.core.defaults.DEFAULT_CHANNEL_KEY.
+RESTART_NOTICE_KEY = "restart_notices"
 
 # The two reasons, which are also the two keys in the messages file.
 COMMANDED = "commanded"
@@ -135,3 +146,37 @@ def pick_message(
     if not lines:
         return FALLBACKS.get(reason, FALLBACKS[DISRUPTION])
     return (rng or random).choice(lines)
+
+
+def notify_targets(configs, guild_ids) -> list[tuple[int, int]]:
+    """``(guild_id, channel_id)`` for every server that asked to be told.
+
+    Two settings have to agree, and they are separate on purpose: subscribing
+    says a server wants the notices, and the default channel says where the bot
+    speaks to it at all. A server that turns notices on without a channel is
+    asking for something the bot has nowhere to put, so it is skipped and said
+    so in the log -- silently dropping it would look identical to the
+    announcement failing.
+
+    Only servers the bot is currently in are considered. A stored subscription
+    for a server it has been removed from is not an error and not worth a line;
+    it simply has nobody to tell.
+
+    Pure, and reads nothing but config: deciding who to tell is a rule, and
+    doing the telling is Discord's problem. See
+    :meth:`wojbot.cogs.admin.Admin._tell_servers`.
+    """
+    targets = []
+    for guild_id in guild_ids:
+        config = configs.get_guild(guild_id)
+        if not config.get(RESTART_NOTICE_KEY):
+            continue
+        channel_id = config.get(DEFAULT_CHANNEL_KEY)
+        if channel_id is None:
+            log.warning(
+                "Server %s wants restart notices but has no default channel; "
+                "nothing to announce to", guild_id,
+            )
+            continue
+        targets.append((guild_id, channel_id))
+    return targets

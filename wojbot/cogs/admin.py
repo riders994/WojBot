@@ -15,7 +15,14 @@ run straight from a shell, ``/restart`` is just ``/quit``.
 The cog also owns the other half of a restart: announcing one. Coming back up
 it DMs the owner a line drawn at random from ``resources/restart_messages.json``
 -- from the *commanded* list if ``/restart`` left a marker behind, from the
-*disruption* list if nothing did. See :mod:`wojbot.core.restart`.
+*disruption* list if nothing did -- and posts that same line to every server
+that has subscribed with ``/setup restartnotices``. See
+:mod:`wojbot.core.restart`.
+
+The owner always hears; a server hears only if it asked to. One line is drawn
+per restart and reused, because one restart is one event: a bot that told the
+owner it was ordered down and a server it fell over would be describing two
+different nights.
 """
 
 from __future__ import annotations
@@ -28,7 +35,13 @@ from discord import app_commands
 from discord.ext import commands
 
 from ..core.checks import is_bot_owner
-from ..core.restart import mark_commanded, pick_message, reason_from_marker, take_marker
+from ..core.restart import (
+    mark_commanded,
+    notify_targets,
+    pick_message,
+    reason_from_marker,
+    take_marker,
+)
 
 log = logging.getLogger(__name__)
 
@@ -110,9 +123,11 @@ class Admin(commands.Cog):
             return
         self._announced = True
         reason = reason_from_marker(take_marker())
+        # Drawn once, said everywhere. See the module docstring.
         message = pick_message(reason)
-        log.info("Announcing a %s restart to the owner", reason)
+        log.info("Announcing a %s restart", reason)
         await self._tell_owner(message)
+        await self._tell_servers(message)
 
     async def _tell_owner(self, message: str) -> None:
         """DM the bot owner. Never raises: an unannounced start still ran."""
@@ -127,6 +142,40 @@ class Admin(commands.Cog):
             log.warning("The owner's DMs are closed; restart went unannounced")
         except Exception:  # noqa: BLE001 - announcing must never take the bot down
             log.exception("Couldn't tell the owner about the restart")
+
+    async def _tell_servers(self, message: str) -> None:
+        """Post to every subscribed server's default channel.
+
+        Each server is tried on its own and its failure kept to itself: a
+        channel deleted in one server must not cost the announcement in the
+        others, and none of it may cost the start. Who to tell is
+        :func:`notify_targets`; this is only the telling.
+        """
+        targets = notify_targets(self.bot.configs, [g.id for g in self.bot.guilds])
+        for guild_id, channel_id in targets:
+            try:
+                channel = self.bot.get_channel(channel_id)
+                if channel is None:
+                    channel = await self.bot.fetch_channel(channel_id)
+                await channel.send(message)
+            except discord.Forbidden:
+                # Configured, still there, and shut to the bot. Worth a line:
+                # the server asked for these and is not getting them.
+                log.warning(
+                    "Can't post restart notices in channel %s (server %s)",
+                    channel_id, guild_id,
+                )
+            except discord.NotFound:
+                log.warning(
+                    "The default channel for server %s (`%s`) is gone; "
+                    "restart notice undelivered", guild_id, channel_id,
+                )
+            except Exception:  # noqa: BLE001 - one server must not cost the rest
+                log.exception(
+                    "Couldn't announce the restart to server %s", guild_id
+                )
+        if targets:
+            log.info("Announced the restart to %d server(s)", len(targets))
 
     @app_commands.command(description="Restart the bot (owner only).")
     @is_bot_owner()

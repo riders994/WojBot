@@ -19,6 +19,11 @@ DEFAULT_BOT_CONFIG: dict = {
 # fleet without overriding anybody's choice. See ConfigStore.get_guild.
 INHERITED_FROM_BOT: tuple[str, ...] = ("dad_joke",)
 
+# The default messaging channel's key. It lives here rather than with one
+# feature because it belongs to none of them in particular -- restart notices
+# are simply the first thing to use it.
+DEFAULT_CHANNEL_KEY = "default_channel"
+
 # Per-Discord-server (guild) settings.
 DEFAULT_SERVER_CONFIG: dict = {
     # Falls back to the bot-wide setting before this one; see INHERITED_FROM_BOT.
@@ -45,6 +50,17 @@ DEFAULT_SERVER_CONFIG: dict = {
     # names one, and rumors reported before then are still recorded -- they just
     # go unannounced.
     "rumor_channel": None,
+    # The server's default messaging channel: where the bot speaks to a server
+    # when nothing more specific applies. Deliberately not rumor_channel -- a
+    # league's wire is somewhere people go to read gossip, and a server may
+    # reasonably want the bot's own notices somewhere else, or want one of the
+    # two and not the other. None until /setup defaultchannel names one.
+    "default_channel": None,
+    # Whether this server is subscribed to the bot's restart announcements.
+    # Off by default, and it has to be: an announcement is a message in a
+    # channel people are reading, so a server opts in rather than finding out
+    # the bot talks to it. See wojbot.core.restart.RESTART_NOTICE_KEY.
+    "restart_notices": False,
 }
 
 # Per-fantasy-league settings.
