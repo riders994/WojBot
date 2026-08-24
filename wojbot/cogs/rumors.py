@@ -1,9 +1,14 @@
 """Report and read league rumors.
 
-``/rumor report`` walks a manager through a rumor -- how loudly it is being said
-(the release type), who is saying it (the source type), the sentence it goes in
-(the form), and the text itself -- then records it and posts it to the channel
+``/rumor report`` walks a manager through a rumor -- who is saying it (the
+source type), how loudly it is being said (the release type), the sentence it
+goes in (the form), and the text itself -- then records it and posts it to the
+channel
 ``/setup rumorchannel`` names. ``/rumor recent`` reads them back.
+
+The leaker comes first because that is the choice a reporter has already made
+before they start typing: they know who is talking, and how far the story
+travels follows from how senior that person is.
 
 Unlike every other grouped command in the bot, ``/rumor`` is deliberately **not**
 ``guild_only``. Half the point of a rumor is that nobody watched you file it, so
@@ -221,8 +226,8 @@ class RumorWizard(discord.ui.View):
         if len(self.leagues) > 1:
             steps.append(("League", self._step_league))
         steps += [
-            ("Release type", self._step_release),
             ("Source", self._step_source),
+            ("Release type", self._step_release),
             ("Form", self._step_form),
         ]
         # A form with nothing to fill has nothing to type; dropping the step
@@ -261,10 +266,10 @@ class RumorWizard(discord.ui.View):
         lines = []
         if self.league and len(self.leagues) > 1:
             lines.append(f"**League:** {self.league.name}")
-        if self.release:
-            lines.append(f"**Release:** {self.release.name}")
         if self.source and self.reporter:
             lines.append(f"**Source:** {self._source_text(self.source)}")
+        if self.release:
+            lines.append(f"**Release:** {self.release.name}")
         if self.form:
             lines.append(f"**Form:** {self.form.title}")
         return "\n".join(lines)
@@ -296,13 +301,16 @@ class RumorWizard(discord.ui.View):
             return f"{note}{chosen}".rstrip()
         if name == "League":
             body = "Which league is this rumor about?"
+        elif name == "Source":
+            body = (
+                "Who's talking? The more senior the leaker, the further this "
+                "can be allowed to travel."
+            )
         elif name == "Release type":
             body = (
-                "How is this getting out? The heavier the release, the more "
-                "senior a source it takes to carry it."
+                f"How is this getting out? *{self._source_text(self.source)}* "
+                "can carry any of these."
             )
-        elif name == "Source":
-            body = f"Who's talking? Sources below can carry a *{self.release.name}*."
         elif name == "Form":
             body = "How should it read?"
         elif name == "The rumor":
@@ -359,51 +367,19 @@ class RumorWizard(discord.ui.View):
         select.callback = callback
         self.add_item(select)
 
-    # --- step: release type ------------------------------------------------
+    # --- step: source ------------------------------------------------------
 
-    def _step_release(self) -> None:
-        options = rumors.releases_for(
+    def _step_source(self) -> None:
+        options = rumors.reportable_sources(
             self.dims.releases,
             self.dims.sources,
             self.dims.forms,
             privileged=self.privileged,
         )
-        select = discord.ui.Select(
-            placeholder="How is it getting out?",
-            options=[
-                discord.SelectOption(
-                    label=_truncate(release.name.title(), 100),
-                    value=str(release.id),
-                    description=f"Authority level {release.level}",
-                    default=(self.release is not None and release.id == self.release.id),
-                )
-                for release in options[:25]
-            ],
-        )
-
-        async def callback(interaction: discord.Interaction, select=select):
-            self.release = self.dims.release(int(select.values[0]))
-            # A source that could carry the old release may not carry this one.
-            self.source = self.form = None
-            self.note = ""
-            await self._advance(interaction)
-
-        select.callback = callback
-        self.add_item(select)
-
-    # --- step: source ------------------------------------------------------
-
-    def _step_source(self) -> None:
-        options = rumors.sources_for(
-            self.release, self.dims.sources, privileged=self.privileged
-        )
         if not options:
-            # releases_for already drops releases with no usable source, so
-            # this only fires if the two ever disagree.
-            self.note = (
-                f"No source you can use is senior enough for a "
-                f"*{self.release.name}*. Go back and pick a lighter release."
-            )
+            # Every reporter has at least the quiet end of the list, so this
+            # only fires if the dims lose their enabled forms entirely.
+            self.note = "There's nobody you can report as right now."
             self.stuck = True
             return
         select = discord.ui.Select(
@@ -422,6 +398,46 @@ class RumorWizard(discord.ui.View):
 
         async def callback(interaction: discord.Interaction, select=select):
             self.source = self.dims.source(int(select.values[0]))
+            # How far this one can travel is the source's to decide, so a
+            # release picked under the old leaker no longer means anything.
+            self.release = self.form = None
+            self.note = ""
+            await self._advance(interaction)
+
+        select.callback = callback
+        self.add_item(select)
+
+    # --- step: release type ------------------------------------------------
+
+    def _step_release(self) -> None:
+        options = rumors.releases_for_source(
+            self.source, self.dims.releases, self.dims.forms
+        )
+        if not options:
+            # reportable_sources already drops sources with nothing to carry,
+            # so this only fires if the two ever disagree.
+            self.note = (
+                f"*{self._source_text(self.source)}* has no way to get this "
+                "out. Go back and pick another source."
+            )
+            self.stuck = True
+            return
+        select = discord.ui.Select(
+            placeholder="How is it getting out?",
+            options=[
+                discord.SelectOption(
+                    label=_truncate(release.name.title(), 100),
+                    value=str(release.id),
+                    description=f"Authority level {release.level}",
+                    default=(self.release is not None and release.id == self.release.id),
+                )
+                for release in options[:25]
+            ],
+        )
+
+        async def callback(interaction: discord.Interaction, select=select):
+            self.release = self.dims.release(int(select.values[0]))
+            # A form that fit the old release may not fit this one.
             self.form = None
             self.note = ""
             await self._advance(interaction)

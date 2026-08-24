@@ -168,29 +168,6 @@ def sources_for(
     return sorted(allowed, key=lambda s: (-s.level, s.id))
 
 
-def releases_for(
-    releases: list[ReleaseType],
-    sources: list[SourceType],
-    forms: list[RumorForm],
-    *,
-    privileged: bool = False,
-) -> list[ReleaseType]:
-    """The release types this reporter could actually see through.
-
-    Filtered by who is asking, not just by what the dims allow. A release type
-    with no enabled form, or no source this reporter may speak as, is a dead
-    end -- 'league release' takes only the Commissioner, and offering it to
-    everyone else just means picking it and finding nothing behind it.
-    """
-    enabled = {form.id for form in forms if form.id in ENABLED_FORM_IDS}
-    allowed = [
-        release for release in releases
-        if enabled.intersection(release.valid_forms)
-        and sources_for(release, sources, privileged=privileged)
-    ]
-    return sorted(allowed, key=lambda r: (r.level, r.name))
-
-
 def forms_for(
     release: ReleaseType,
     source: SourceType,
@@ -208,6 +185,50 @@ def forms_for(
         and form.id in release.valid_forms
         and (not form.valid_sources or source.id in form.valid_sources)
     ]
+
+
+def reportable_sources(
+    releases: list[ReleaseType],
+    sources: list[SourceType],
+    forms: list[RumorForm],
+    *,
+    privileged: bool = False,
+) -> list[SourceType]:
+    """Every source this reporter could speak as, most authoritative first.
+
+    The wizard asks who is leaking before it asks how loudly, so this is the
+    first list it shows: a source belongs on it if there is any release it may
+    carry that also has a form behind it. The Commissioner is on it only for a
+    reporter trusted with them, same as anywhere else.
+    """
+    allowed = {
+        source.id
+        for release in releases
+        for source in sources_for(release, sources, privileged=privileged)
+        if forms_for(release, source, forms)
+    }
+    return sorted(
+        (source for source in sources if source.id in allowed),
+        key=lambda s: (-s.level, s.id),
+    )
+
+
+def releases_for_source(
+    source: SourceType,
+    releases: list[ReleaseType],
+    forms: list[RumorForm],
+) -> list[ReleaseType]:
+    """What ``source`` can be heard saying, quietest first.
+
+    The authority rule read the other way round: a source carries anything up
+    to its own level. Whether the source may be spoken as at all is settled by
+    :func:`reportable_sources`, which is where this one's argument comes from.
+    """
+    allowed = [
+        release for release in releases
+        if source.level >= release.level and forms_for(release, source, forms)
+    ]
+    return sorted(allowed, key=lambda r: (r.level, r.name))
 
 
 def fill_fields(text: str, *, team_name: str, manager_name: str) -> str:

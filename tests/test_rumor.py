@@ -21,9 +21,10 @@ from wojbot.core.rumor import (
     fill_fields,
     forms_for,
     is_reportable,
-    releases_for,
+    releases_for_source,
     render_form,
     render_source,
+    reportable_sources,
     sources_for,
 )
 
@@ -194,24 +195,83 @@ def test_disabled_forms_are_never_offered():
     assert forms_for(release("discussion"), execs, [QUIET]) == []
 
 
-def test_a_privileged_reporter_is_offered_every_release():
-    """Every seeded release type permits form 1, so all of them qualify."""
-    offered = releases_for(RELEASES, SOURCES, [FREE_FORM], privileged=True)
+# --- picking the leaker first ---------------------------------------------
+
+
+def test_every_reportable_source_is_offered_to_a_reporter():
+    """Form 1 is open to everyone, so nothing reportable is a dead end."""
+    offered = reportable_sources(RELEASES, SOURCES, [FREE_FORM], privileged=True)
+    assert ids(offered) == {s.id for s in SOURCES if is_reportable(s)}
+
+
+def test_unreportable_sources_are_never_offered():
+    """The ones nothing can resolve stay off the first list too."""
+    offered = reportable_sources(RELEASES, SOURCES, [FREE_FORM], privileged=True)
+    assert ids(offered).isdisjoint({8, 9, 11, 12})
+
+
+def test_commissioner_is_offered_as_a_leaker_only_with_privilege():
+    assert COMMISSIONER_SOURCE_ID in ids(
+        reportable_sources(RELEASES, SOURCES, [FREE_FORM], privileged=True)
+    )
+    assert COMMISSIONER_SOURCE_ID not in ids(
+        reportable_sources(RELEASES, SOURCES, [FREE_FORM], privileged=False)
+    )
+
+
+def test_a_source_with_no_usable_form_is_not_offered():
+    """QUIET is disabled, so the sources it lists have nothing behind it."""
+    assert reportable_sources(RELEASES, SOURCES, [QUIET], privileged=True) == []
+
+
+def test_leakers_are_offered_most_senior_first():
+    offered = reportable_sources(RELEASES, SOURCES, [FREE_FORM], privileged=True)
+    assert [s.level for s in offered] == sorted(
+        (s.level for s in offered), reverse=True
+    )
+
+
+def test_the_commissioner_can_carry_everything():
+    commissioner = next(s for s in SOURCES if s.id == COMMISSIONER_SOURCE_ID)
+    offered = releases_for_source(commissioner, RELEASES, [FREE_FORM])
     assert {r.id for r in offered} == {r.id for r in RELEASES}
     assert [r.level for r in offered] == sorted(r.level for r in RELEASES)
 
 
-def test_league_release_is_not_offered_without_privilege():
-    """It only has the Commissioner behind it, so it would be a dead end."""
-    offered = releases_for(RELEASES, SOURCES, [FREE_FORM], privileged=False)
-    assert release("league release").id not in {r.id for r in offered}
-    assert release("statement").id in {r.id for r in offered}
+def test_anonymous_sources_carry_only_the_quietest_releases():
+    """Level 0 hears nothing louder than itself."""
+    anonymous = SOURCES[13]
+    offered = releases_for_source(anonymous, RELEASES, [FREE_FORM])
+    assert {r.name for r in offered} == {"none", "rumor"}
 
 
-def test_every_offered_release_has_at_least_one_source():
+def test_a_release_is_never_offered_above_its_leaker():
+    for source in reportable_sources(RELEASES, SOURCES, [FREE_FORM], privileged=True):
+        for rel in releases_for_source(source, RELEASES, [FREE_FORM]):
+            assert source.level >= rel.level, (source.name, rel.name)
+
+
+def test_the_two_directions_agree():
+    """Whatever a source is offered, that release would have offered it back."""
     for privileged in (False, True):
-        for rel in releases_for(RELEASES, SOURCES, [FREE_FORM], privileged=privileged):
-            assert sources_for(rel, SOURCES, privileged=privileged), rel.name
+        offered = reportable_sources(
+            RELEASES, SOURCES, [FREE_FORM], privileged=privileged
+        )
+        for source in offered:
+            releases = releases_for_source(source, RELEASES, [FREE_FORM])
+            assert releases, source.name
+            for rel in releases:
+                assert source.id in ids(
+                    sources_for(rel, SOURCES, privileged=privileged)
+                ), (source.name, rel.name)
+
+
+def test_every_offered_leaker_has_at_least_one_release():
+    for privileged in (False, True):
+        for source in reportable_sources(
+            RELEASES, SOURCES, [FREE_FORM], privileged=privileged
+        ):
+            assert releases_for_source(source, RELEASES, [FREE_FORM]), source.name
 
 
 # --- rendering ------------------------------------------------------------

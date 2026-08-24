@@ -161,22 +161,23 @@ the database down.
 half the point. In a DM the bot works out the league from who you are; if you
 play in more than one, it asks which.
 
-The wizard asks for three things:
+The wizard asks for three things, in this order:
 
+- **Source type** — who's leaking it. `{team}` and `{manager}` are filled in from
+  your team and handle for the current season.
 - **Release type** — how loudly it's being said, from `rumor` up to
   `league release`.
-- **Source type** — who's saying it. `{team}` and `{manager}` are filled in from
-  your team and handle for the current season.
 - **Form** — the sentence it goes in. Right now that's the free form.
 
 Then you type the rumor, review it, and post it. It's recorded and announced to
 the rumor channel — **without naming you**. The source type is the attribution.
 
-**The heavier the release, the more senior a source it takes.** A `statement`
-has to come from your GM or President of Basketball Ops; a `league release` only
-from the Commissioner, which is limited to the Admin tier. A plain `rumor` will
-take anybody, down to `anonymous sources`. Release types you have no source for
-aren't offered at all, so you can't walk into a dead end.
+**The more senior the leaker, the heavier a release they can carry.** Pick your
+GM or President of Basketball Ops and a `statement` is on the table; the
+Commissioner — limited to the Admin tier — is the only one who can put out a
+`league release`. `anonymous sources` carry a plain `rumor` and nothing louder.
+Once you've picked the leaker, you're only offered the releases they can
+actually get out, so you can't walk into a dead end.
 
 ### Elo
 
