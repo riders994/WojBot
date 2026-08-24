@@ -240,4 +240,5 @@ shows the connection and how many queries are registered.
 
 **You edited a file in `sql/queries/`** — the registry skips files it has
 already logged, so delete `sql/manager.log.json` and `sql/queries/_queries.json`
-and restart to pick the change up.
+and restart to pick the change up. A bot owner can restart from Discord with
+`/restart`, wherever the bot runs under systemd.

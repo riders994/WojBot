@@ -866,6 +866,19 @@ sudo systemctl enable systemd-time-wait-sync
 timedatectl        # "System clock synchronized: yes" once it has settled
 ```
 
+#### Deploying from Discord
+
+With `ExecStartPre` wired up, `/restart` is a deploy. The command is owner-only,
+asks for a confirmation, and then closes the bot from inside — `Restart=always`
+answers the clean exit the same way it answers a crash, which means the updater
+runs and the bot comes back on whatever `primary` is at that moment. No SSH, no
+sudoers entry for the service account: the bot needs no privilege to exit.
+
+It refuses when `INVOCATION_ID` isn't in its environment — systemd sets that for
+every service it runs, so its absence means nothing is watching for the exit and
+`/restart` would be a shutdown. Drop `ExecStartPre` and the command still works;
+it just restarts the code already on disk.
+
 Nothing is running on the new Pi yet, so you can stop here for as long as you
 like. Steps 1–7 leave the workstation bot untouched and in charge; step 8 is the
 first and only moment anything changes.
