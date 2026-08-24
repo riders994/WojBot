@@ -7,8 +7,9 @@ A Discord bot for a fantasy basketball league. Slash commands only.
 - **Elo** — standings and ratings, backed by the
   [`elo-system`](https://github.com/riders994/eloSystem) package.
 - **Commissioner tools** — leagues, seasons, and the warehouse dimension tables.
-- **Setup** — per-server configuration with a guided wizard, and three
-  permission tiers on top of it.
+- **Setup** — per-server configuration with a guided wizard, and four permission
+  tiers on top of it: Admin, Verified, Normal, and Restricted, each passing
+  everything below it.
 
 ## Getting started
 

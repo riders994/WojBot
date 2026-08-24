@@ -48,7 +48,7 @@ RUMOR_CHANNEL_KEY = "rumor_channel"
 ENABLED_FORM_IDS: tuple[int, ...] = (1,)
 
 # 'the Commissioner' -- the league's own voice, so it is not a source any
-# manager may claim. Gated on the admin_roles tier in the league's server.
+# manager may claim. Gated on the verified_roles tier in the league's server.
 COMMISSIONER_SOURCE_ID = 10
 
 # How much a reporter may type into one fill. Discord's own ceiling on a
@@ -156,7 +156,7 @@ def sources_for(
     Args:
         release: the chosen release type.
         sources: every known source type.
-        privileged: whether the reporter passes the admin tier in the league's
+        privileged: whether the reporter passes the Verified tier in the league's
             server, which is what unlocks the Commissioner.
     """
     allowed = [

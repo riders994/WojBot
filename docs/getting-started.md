@@ -92,8 +92,9 @@ one. If you own the bot, you always pass, everywhere.
 
 Walks a few steps on one message:
 
-1. **Privileged roles** — which roles get the Commissioner and Admin tiers. See
-   [Permissions](#permissions).
+1. **Privileged roles** — which roles get the Admin and Verified tiers. The
+   wizard covers the two granting tiers only; Restricted is managed from
+   `/verify`. See [Permissions](#permissions).
 2. **League** — which configured league this server drives. The options come
    from `resources/configs/sys_config.yml`. Picking one loads it, exactly as
    `/commish load` would.
@@ -174,7 +175,7 @@ the rumor channel — **without naming you**. The source type is the attribution
 
 **The more senior the leaker, the heavier a release they can carry.** Pick your
 GM or President of Basketball Ops and a `statement` is on the table; the
-Commissioner — limited to the Admin tier — is the only one who can put out a
+Commissioner — limited to the Verified tier — is the only one who can put out a
 `league release`. `anonymous sources` carry a plain `rumor` and nothing louder.
 Once you've picked the leaker, you're only offered the releases they can
 actually get out, so you can't walk into a dead end.
@@ -195,20 +196,58 @@ config files.
 
 ## Permissions
 
-Three tiers. **The bot owner passes every check, everywhere. Server
-administrators pass both role tiers in their own server.**
+Four tiers, and they are a **ladder** — each one passes everything below it.
+**The bot owner passes every check, everywhere. Server administrators pass every
+role tier in their own server, and cannot be restricted.**
 
 | Tier | Configured as | Gates |
 |---|---|---|
 | **Bot owner** | not configurable | `/sql`, `/setup global` |
-| **Commissioner** | `commissioner_roles`, default `Commish` | `/commish load\|sync\|publish\|dump`, all of `/commish db`, `/commish season add\|platform\|current` |
-| **Admin** | `admin_roles`, default `mods`, `Champion`, `Commish` | `/setup`, `/verify add\|remove`, `/commish leagues\|status`, `/commish season list`, and the Commissioner source in `/rumor` |
+| **Admin** | `admin_roles`, default `Commish` | `/commish load\|sync\|publish\|dump`, all of `/commish db`, `/commish season add\|platform\|current`, `/verify add\|remove` |
+| **Verified** | `verified_roles`, default `mods`, `Champion` | `/setup`, `/commish leagues\|status`, `/commish season list`, and the Commissioner source in `/rumor` |
+| **Normal** | not a role list | everything else — the default |
+| **Restricted** | `restricted_roles`, empty by default | *denied* every command bar `/help` and `/verify show` |
 
-Roles are matched **by name**, per server — so renaming a role in Discord
-silently unconfigures it. `/verify show` tells you where you stand and flags
-configured names that don't match any live role.
+**Normal isn't configurable, and can't be.** It's simply every command that has
+no tier on it — being undecorated is what it means. It only became worth naming
+once Restricted existed to sit below it.
 
-Manage them with `/verify add tier:… role:@Role` and `/verify remove`.
+**Restricted overrides the ladder rather than sitting under it.** Somebody who
+holds both an Admin role and a restricted one is shut out; the deny is checked
+before the command's own permissions, so it never has to out-argue a grant. It's
+enforced once for the whole command tree rather than per command, which is why a
+command added later is covered without anyone marking it.
+
+A role belongs in **one** list, the highest that should hold it — Admin already
+passes every Verified check, so listing it twice only invites somebody to remove
+it from one and assume the other still covers it.
+
+Roles are matched **by name** and exactly, per server — so renaming a role in
+Discord silently unconfigures it. `/verify show` tells you where you stand, and
+says *why* for each tier.
+
+Manage them with `/verify add tier:… role:@Role` and `/verify remove`. **Only a
+Discord server administrator can change the Admin list** — a tier that can hand
+itself out isn't a tier. An Admin can edit Verified and Restricted.
+
+Three things about this that catch people out. **Bot owners and Discord server
+administrators pass without the configured roles being read at all**, so in a
+server whose testers all hold Administrator, a role list matching nothing still
+looks like it works — test with somebody who holds neither. **An Admin passes
+Verified checks by implication**, so removing a role from `verified_roles` may
+change nothing for the people who also hold Admin; `/verify show` says when that
+is what happened. And **a server that stores its own list stops following the
+defaults**: these keys have no inherit path, so a name added to the built-in
+defaults later never reaches a server that has already used `/verify add`.
+
+### Upgrading from the two-tier setup
+
+The old `commissioner_roles` became `admin_roles`, and the old `admin_roles`
+(the *lower* of the two tiers) became `verified_roles`. Stored server files are
+migrated automatically on the first start, and stamped with a `_schema: 2`
+marker so it happens exactly once. Nothing to run by hand — but the rename means
+a v1 file's `admin_roles` is deliberately read as *Verified*, since that is what
+it granted before.
 
 ## Troubleshooting
 
