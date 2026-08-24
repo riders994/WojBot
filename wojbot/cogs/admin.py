@@ -11,6 +11,11 @@ sudoers entry for the service account. See ``docs/deploying-to-a-pi.md`` and
 
 Which is also why the command refuses when nothing is supervising the process:
 run straight from a shell, ``/restart`` is just ``/quit``.
+
+The cog also owns the other half of a restart: announcing one. Coming back up
+it DMs the owner a line drawn at random from ``resources/restart_messages.json``
+-- from the *commanded* list if ``/restart`` left a marker behind, from the
+*disruption* list if nothing did. See :mod:`wojbot.core.restart`.
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from ..core.checks import is_bot_owner
+from ..core.restart import mark_commanded, pick_message, reason_from_marker, take_marker
 
 log = logging.getLogger(__name__)
 
@@ -72,6 +78,10 @@ class ConfirmRestart(discord.ui.View):
         log.warning(
             "Restart requested by %s (%s); shutting down", interaction.user, interaction.user.id
         )
+        # Left for the *next* process to find: this one won't be here to say
+        # why it went. Written before the close so a shutdown that hangs still
+        # gets reported as the deliberate thing it was.
+        mark_commanded(interaction.user.id)
         # Bot.close unloads the extensions on the way out, so the cogs holding
         # something open -- the database connection, the scheduler's tick --
         # get their cog_unload rather than having the process pulled from under
@@ -90,6 +100,33 @@ class Admin(commands.Cog):
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
+        # on_ready fires again on every gateway resume, and a reconnect is not
+        # a restart. One announcement per process, so the flag lives here.
+        self._announced = False
+
+    @commands.Cog.listener()
+    async def on_ready(self) -> None:
+        if self._announced:
+            return
+        self._announced = True
+        reason = reason_from_marker(take_marker())
+        message = pick_message(reason)
+        log.info("Announcing a %s restart to the owner", reason)
+        await self._tell_owner(message)
+
+    async def _tell_owner(self, message: str) -> None:
+        """DM the bot owner. Never raises: an unannounced start still ran."""
+        try:
+            app = self.bot.application or await self.bot.application_info()
+            owner = app.owner
+            if owner is None:
+                log.warning("No owner on the application; restart went unannounced")
+                return
+            await owner.send(message)
+        except discord.Forbidden:
+            log.warning("The owner's DMs are closed; restart went unannounced")
+        except Exception:  # noqa: BLE001 - announcing must never take the bot down
+            log.exception("Couldn't tell the owner about the restart")
 
     @app_commands.command(description="Restart the bot (owner only).")
     @is_bot_owner()

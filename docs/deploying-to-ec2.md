@@ -1017,6 +1017,14 @@ every service it runs, so its absence means nothing is watching for the exit and
 `/restart` would be a shutdown. Drop `ExecStartPre` and the command still works;
 it just restarts the code already on disk.
 
+Either way the bot DMs the owner when it comes back, with a line picked at
+random from `resources/restart_messages.json` — from that file's `commanded`
+list when `/restart` was what took it down, and from its `disruption` list when
+something else did. Editing the file is the whole of changing what it says; it
+is read fresh on every start. The two are told apart by a marker the command
+leaves in `resources/state/`, which the next start consumes, so a power cut
+never reports itself as a deploy.
+
 ### What `Restart=always` is actually covering here
 
 Less than it was on the Pi, and it's worth knowing what changed.
