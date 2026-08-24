@@ -10,6 +10,7 @@ from discord.ext import commands
 from .cogs import discover_extensions
 from .core.config import PROJECT_ROOT, Settings
 from .core.config_store import ConfigStore
+from .core.checks import Restricted, evaluate_restriction
 from .core.data import LeagueCache, LocalSource, Runtime
 from .core.discord_anon import DiscordAnon
 
@@ -50,11 +51,54 @@ class WojBotV2(commands.Bot):
         # Turn failed permission checks (and other app-command errors) into a
         # friendly ephemeral reply instead of a silent failure / raw traceback.
         self.tree.on_error = self._on_app_command_error
+        # The Restricted tier, enforced once for the whole tree. It has to live
+        # here rather than in a decorator: Restricted is a *denial* beating the
+        # default-allow, and the default-allow is precisely the commands that
+        # carry no decorator. A per-command check would cover only what somebody
+        # remembered to mark, and the command they forgot is the one a restricted
+        # member goes looking for. See wojbot.core.checks.
+        self.tree.interaction_check = self._interaction_check
+
+    # Commands a Restricted member keeps, by qualified name. Deliberately tiny,
+    # and both entries earn their place by explaining the restriction rather
+    # than working around it: without them somebody restricted gets a refusal
+    # from every command including the ones that would tell them why.
+    ALWAYS_ALLOWED = frozenset({"help", "verify show"})
+
+    async def _interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Refuse everything but ALWAYS_ALLOWED for a Restricted member.
+
+        Runs before every app command in the tree. Returning False would refuse
+        silently, so this raises instead and lets the error handler explain.
+        """
+        command = interaction.command
+        if command is not None and command.qualified_name in self.ALWAYS_ALLOWED:
+            return True
+        # In a DM there is no server whose restriction could apply; a flow that
+        # starts in a DM but acts on one league re-checks once it knows which.
+        result = await evaluate_restriction(
+            self,
+            interaction.guild_id if interaction.guild is not None else None,
+            interaction.user,
+            member=interaction.user if interaction.guild is not None else None,
+        )
+        if result.allowed:
+            raise Restricted(result.describe())
+        return True
 
     async def _on_app_command_error(
         self, interaction: discord.Interaction, error: discord.app_commands.AppCommandError
     ) -> None:
-        if isinstance(error, discord.app_commands.CheckFailure):
+        if isinstance(error, Restricted):
+            # Distinct from a plain permission failure on purpose: telling a
+            # restricted member to go ask for a role sends them to ask for one
+            # that would not help.
+            message = (
+                "You're restricted in this server, so you can't use the bot's "
+                "commands here. `/help` still works, and a server admin can "
+                "lift it with `/verify remove`."
+            )
+        elif isinstance(error, discord.app_commands.CheckFailure):
             message = "You don't have permission to use this command."
         else:
             log.exception("Unhandled app command error", exc_info=error)

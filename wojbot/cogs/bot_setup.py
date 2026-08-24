@@ -45,10 +45,10 @@ from discord import app_commands
 from discord.ext import commands
 
 from ..core.checks import (
-    ADMIN_ROLES_KEY,
-    COMMISSIONER_ROLES_KEY,
+    TIER_LABELS,
+    TIER_LADDER,
     is_bot_owner,
-    is_privileged,
+    is_verified,
 )
 from ..core.elo import (
     ELO_SYS_CONFIG,
@@ -57,6 +57,8 @@ from ..core.elo import (
     configured_league,
     runtime_key,
 )
+from ..core.defaults import DEFAULT_CHANNEL_KEY
+from ..core.restart import RESTART_NOTICE_KEY
 from ..core.rumor import RUMOR_CHANNEL_KEY, league_for_guild
 
 log = logging.getLogger(__name__)
@@ -64,7 +66,11 @@ log = logging.getLogger(__name__)
 DAD_JOKE_KEY = "dad_joke"
 WIZARD_TIMEOUT = 300.0
 
-TIERS = ((COMMISSIONER_ROLES_KEY, "Commissioner"), (ADMIN_ROLES_KEY, "Admin"))
+# The tiers the setup wizard offers, highest first -- the positive ladder only.
+# Restricted is deliberately not here: this flow is about granting a new server's
+# roles, and a wizard that asked who to shut out during onboarding would be
+# asking the wrong question. It is managed from /verify instead.
+TIERS = tuple((key, TIER_LABELS[key]) for key in TIER_LADDER)
 
 # Every inherited setting's server-side toggle offers these three: the two
 # values, plus giving the choice back so the bot-wide default applies again.
@@ -74,6 +80,11 @@ STATE_CHOICES = [
     app_commands.Choice(name="Off", value=OFF),
     app_commands.Choice(name="Follow the bot default", value=INHERIT),
 ]
+
+# A setting a server owns outright gets the two values and no third: there is no
+# bot-wide default for it to fall back to, and offering "follow the default"
+# where none exists would be a choice that does nothing.
+TOGGLE_CHOICES = STATE_CHOICES[:2]
 
 
 def describe_setting(configs, guild_id: int, key: str) -> str:
@@ -208,10 +219,15 @@ class SetupWizard(discord.ui.View):
         that reads like a working one. Binding a league at the step before adds
         it, which is why the list is rebuilt on every render rather than fixed
         when the wizard starts.
+
+        The default channel is asked of everybody, and asked *before* the rumor
+        channel: it is the general one, and a server that runs no league still
+        wants somewhere for the bot to talk to it.
         """
         steps: list[tuple[str, object, object]] = [
             ("Privileged roles", self._step_roles, self._body_roles),
             ("League", self._step_league, self._body_league),
+            ("Default channel", self._step_default, self._body_default),
         ]
         if self.is_league:
             steps.append(("Rumor channel", self._step_rumors, self._body_rumors))
@@ -264,6 +280,26 @@ class SetupWizard(discord.ui.View):
             "server drives a league; skip it if this one doesn't."
         )
         return f"{current}\n\nPick the Elo league this server drives.{note}"
+
+    def _body_default(self) -> str:
+        # Branching rather than dropping describe_channel's "not set" into a
+        # sentence, which reads as a bug -- same reason _body_league branches.
+        stored = self.bot.configs.get_guild(self.guild.id).get(DEFAULT_CHANNEL_KEY)
+        current = (
+            "The bot has nowhere to speak to this server yet."
+            if stored is None else
+            "The bot speaks to this server in "
+            f"{describe_channel(self.bot.configs, self.guild, DEFAULT_CHANNEL_KEY)}."
+        )
+        return (
+            f"{current}\n\nPick where the "
+            "bot's own output goes — the things that aren't the rumor wire. A "
+            "quiet channel is the right answer: somebody pulling a report for "
+            "the league shouldn't have to ping everyone to read it.\n\n"
+            "Separate from the rumor channel on purpose, and it can be a "
+            "different one. Skip it and the bot simply has nowhere to volunteer "
+            "anything."
+        )
 
     def _body_rumors(self) -> str:
         current = describe_channel(self.bot.configs, self.guild, RUMOR_CHANNEL_KEY)
@@ -351,6 +387,31 @@ class SetupWizard(discord.ui.View):
 
             select.callback = callback
             self.add_item(select)
+        self.add_item(_NextButton(self, "Next ›"))
+
+    # --- step: default channel ---------------------------------------------
+
+    def _step_default(self) -> None:
+        select = discord.ui.ChannelSelect(
+            placeholder="Channel for the bot's own messages",
+            channel_types=[discord.ChannelType.text],
+            min_values=0,
+            max_values=1,
+        )
+
+        async def callback(interaction: discord.Interaction, select=select):
+            if not select.values:
+                self._render()
+                await interaction.response.edit_message(embed=self._embed(), view=self)
+                return
+            channel = select.values[0]
+            self.bot.configs.set_guild(self.guild.id, {DEFAULT_CHANNEL_KEY: channel.id})
+            self.done.append(f"The bot will speak to this server in {channel.mention}")
+            self._render()
+            await interaction.response.edit_message(embed=self._embed(), view=self)
+
+        select.callback = callback
+        self.add_item(select)
         self.add_item(_NextButton(self, "Next ›"))
 
     # --- step: rumor channel (league servers only) -------------------------
@@ -486,6 +547,20 @@ class BotSetup(commands.Cog):
                     f"The rumor channel (`{channel_id}`) no longer exists — "
                     "`/setup rumorchannel`"
                 )
+        # Only worth raising for a server that asked for notices: a default
+        # channel is optional until something wants to use it.
+        if config[RESTART_NOTICE_KEY]:
+            channel_id = config.get(DEFAULT_CHANNEL_KEY)
+            if channel_id is None:
+                steps.append(
+                    "Restart notices are on but there's no default channel — "
+                    "`/setup defaultchannel`"
+                )
+            elif guild.get_channel(channel_id) is None:
+                steps.append(
+                    f"The default channel (`{channel_id}`) no longer exists — "
+                    "`/setup defaultchannel`"
+                )
         sql = getattr(self.bot, "sql", None)
         if sql is None:
             steps.append("No database service — check `SQL_CONN_URI`")
@@ -498,7 +573,7 @@ class BotSetup(commands.Cog):
         return "**Outstanding**\n" + "\n".join(f"• {s}" for s in steps)
 
     @group.command(name="show", description="Show this server's settings and what's left to do.")
-    @is_privileged()
+    @is_verified()
     async def show(self, interaction: discord.Interaction) -> None:
         guild = interaction.guild
         # Deferred for the one check that can reach the database; everything
@@ -526,6 +601,14 @@ class BotSetup(commands.Cog):
                 "**Rumor channel:** n/a — this server doesn't run a league"
             )
         lines.append(
+            f"**Default channel:** "
+            f"{describe_channel(self.bot.configs, guild, DEFAULT_CHANNEL_KEY)}"
+        )
+        lines.append(
+            f"**Restart notices:** "
+            f"{'on' if config[RESTART_NOTICE_KEY] else 'off'}"
+        )
+        lines.append(
             f"**Dad jokes:** {describe_setting(self.bot.configs, guild.id, DAD_JOKE_KEY)}"
         )
 
@@ -538,7 +621,8 @@ class BotSetup(commands.Cog):
         )
         embed.set_footer(
             text="Roles: /verify · dad jokes: /dadjokes · league: /commish · "
-                 "rumors: /setup rumorchannel · or walk through it with /setup wizard"
+                 "rumors: /setup rumorchannel · notices: /setup restartnotices · "
+                 "or walk through it with /setup wizard"
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
 
@@ -546,7 +630,7 @@ class BotSetup(commands.Cog):
         name="rumorchannel", description="Set the channel reported rumors post to."
     )
     @app_commands.describe(channel="Where /rumor report announces to")
-    @is_privileged()
+    @is_verified()
     async def rumorchannel(
         self, interaction: discord.Interaction, channel: discord.TextChannel
     ) -> None:
@@ -576,10 +660,86 @@ class BotSetup(commands.Cog):
             f"Reported rumors will post to {channel.mention}.{warning}", ephemeral=True
         )
 
+    @group.command(
+        name="defaultchannel",
+        description="Set the channel the bot speaks to this server in.",
+    )
+    @app_commands.describe(channel="Where the bot posts notices meant for this server")
+    @is_verified()
+    async def defaultchannel(
+        self, interaction: discord.Interaction, channel: discord.TextChannel
+    ) -> None:
+        self.bot.configs.set_guild(interaction.guild_id, {DEFAULT_CHANNEL_KEY: channel.id})
+        # Same warning as the rumor channel, for the same reason: the setting
+        # saves either way, and a channel the bot can't post in would otherwise
+        # only reveal itself the next time it had something to say.
+        allowed = channel.permissions_for(interaction.guild.me).send_messages
+        warning = (
+            "" if allowed
+            else f"\n\n⚠️ I can't send messages in {channel.mention} — nothing "
+                 "will reach it until that's fixed."
+        )
+        config = self.bot.configs.get_guild(interaction.guild_id)
+        subscribed = (
+            "" if config[RESTART_NOTICE_KEY]
+            else "\n\nNothing posts here yet. `/setup restartnotices state:On` "
+                 "is the one thing that currently uses it."
+        )
+        await interaction.response.send_message(
+            f"I'll speak to this server in {channel.mention}.{warning}{subscribed}",
+            ephemeral=True,
+        )
+
+    @group.command(
+        name="restartnotices",
+        description="Say whether this server hears when the bot restarts.",
+    )
+    @app_commands.describe(state="On to subscribe this server, off to stop")
+    @app_commands.choices(state=TOGGLE_CHOICES)
+    @is_verified()
+    async def restartnotices(
+        self, interaction: discord.Interaction, state: app_commands.Choice[str]
+    ) -> None:
+        guild_id = interaction.guild_id
+        enabled = state.value == ON
+        self.bot.configs.set_guild(guild_id, {RESTART_NOTICE_KEY: enabled})
+        if not enabled:
+            await interaction.response.send_message(
+                "This server won't hear about restarts any more.", ephemeral=True
+            )
+            return
+
+        # Subscribing without somewhere to post is the one way to turn this on
+        # and get nothing, so it is answered here rather than left to be
+        # noticed after the next restart didn't say anything.
+        channel_id = self.bot.configs.get_guild(guild_id).get(DEFAULT_CHANNEL_KEY)
+        if channel_id is None:
+            await interaction.response.send_message(
+                "This server is subscribed — but there's nowhere to post yet. "
+                "Name a channel with `/setup defaultchannel` and the next "
+                "restart will say so there.",
+                ephemeral=True,
+            )
+            return
+        channel = interaction.guild.get_channel(channel_id)
+        if channel is None:
+            await interaction.response.send_message(
+                f"This server is subscribed — but the default channel "
+                f"(`{channel_id}`) no longer exists. Point `/setup "
+                "defaultchannel` at a new one.",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_message(
+            f"This server will hear about restarts in {channel.mention} — "
+            "both the ones I'm asked for and the ones I'm not.",
+            ephemeral=True,
+        )
+
     @group.command(name="dadjokes", description="Turn dad jokes on or off for this server.")
     @app_commands.describe(state="On, off, or follow whatever the bot-wide default is")
     @app_commands.choices(state=STATE_CHOICES)
-    @is_privileged()
+    @is_verified()
     async def dadjokes(
         self, interaction: discord.Interaction, state: app_commands.Choice[str]
     ) -> None:
@@ -601,7 +761,7 @@ class BotSetup(commands.Cog):
         )
 
     @group.command(name="wizard", description="Walk through setting this server up.")
-    @is_privileged()
+    @is_verified()
     async def wizard(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
         view = await SetupWizard.create(self, interaction)

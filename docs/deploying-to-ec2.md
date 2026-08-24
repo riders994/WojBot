@@ -1004,6 +1004,27 @@ or put it on a timer that only restarts when the commit actually moved, which
 gets you unattended deploys without coupling them to every crash recovery. The
 script is written to be safe in all three modes; only the unit line changes.
 
+#### Deploying from Discord
+
+With `ExecStartPre` wired up, `/restart` is a deploy. The command is owner-only,
+asks for a confirmation, and then closes the bot from inside — `Restart=always`
+answers the clean exit the same way it answers a crash, which means the updater
+runs and the bot comes back on whatever `primary` is at that moment. No SSH, no
+sudoers entry for the service account: the bot needs no privilege to exit.
+
+It refuses when `INVOCATION_ID` isn't in its environment — systemd sets that for
+every service it runs, so its absence means nothing is watching for the exit and
+`/restart` would be a shutdown. Drop `ExecStartPre` and the command still works;
+it just restarts the code already on disk.
+
+Either way the bot DMs the owner when it comes back, with a line picked at
+random from `resources/restart_messages.json` — from that file's `commanded`
+list when `/restart` was what took it down, and from its `disruption` list when
+something else did. Editing the file is the whole of changing what it says; it
+is read fresh on every start. The two are told apart by a marker the command
+leaves in `resources/state/`, which the next start consumes, so a power cut
+never reports itself as a deploy.
+
 ### What `Restart=always` is actually covering here
 
 Less than it was on the Pi, and it's worth knowing what changed.

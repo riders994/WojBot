@@ -11,7 +11,7 @@ setup](#2-set-up-each-league-server) once in each.
 The short version, run in the league's server:
 
 ```
-/setup wizard          → roles, league, rumor channel
+/setup wizard          → roles, league, channels, dad jokes
 /commish db migrate    → this server now owns the league in the database
 /commish db managers   → see who's in it
 /commish db linkuser   → attach each Discord user to their manager
@@ -92,20 +92,46 @@ one. If you own the bot, you always pass, everywhere.
 
 Walks a few steps on one message:
 
-1. **Privileged roles** — which roles get the Commissioner and Admin tiers. See
-   [Permissions](#permissions).
+1. **Privileged roles** — which roles get the Admin and Verified tiers. The
+   wizard covers the two granting tiers only; Restricted is managed from
+   `/verify`. See [Permissions](#permissions).
 2. **League** — which configured league this server drives. The options come
    from `resources/configs/sys_config.yml`. Picking one loads it, exactly as
    `/commish load` would.
-3. **Rumor channel** — where `/rumor report` announces to. **League servers
+3. **Default channel** — where the bot's own output goes: the things that
+   aren't the rumor wire. Asked of every server, league or not. A quiet,
+   muted channel is usually the right answer — somebody pulling a report for
+   the league shouldn't have to ping everyone to read it.
+4. **Rumor channel** — where `/rumor report` announces to. **League servers
    only:** the step is there if the server is already bound to a league, or as
    soon as step two binds it. A server that runs no league has no rumors to
    post, and the same goes for `/setup rumorchannel`, which declines.
-4. **Dad jokes** — on, off, or follow the bot-wide default.
+5. **Dad jokes** — on, off, or follow the bot-wide default.
 
 Every step is optional and you can re-run the wizard, or set any one of them
-later with `/verify add`, `/commish load`, `/setup rumorchannel`, and
-`/setup dadjokes`.
+later with `/verify add`, `/commish load`, `/setup defaultchannel`,
+`/setup rumorchannel`, and `/setup dadjokes`.
+
+**The default and rumor channels are separate settings and can be separate
+channels.** A wire people open to read gossip is not necessarily where a notice
+or a report belongs, and a server may want either without the other.
+
+### 2a-ii. Restart notices
+
+```
+/setup restartnotices state:On    → this server hears when the bot comes back
+```
+
+Off until a server asks, and deliberately not in the wizard: it's not part of
+getting a league running, and it's the one setting here that makes the bot
+speak unprompted. Subscribed, the server gets one line in its **default
+channel** each time the bot comes back — both the restarts it was asked for and
+the ones it wasn't, drawn from the same lists the owner's DM uses
+(`resources/restart_messages.json`).
+
+The two settings are independent, so turning notices on without a default
+channel subscribes you to nothing; `/setup restartnotices` says so at the time,
+and `/setup show` keeps saying it.
 
 ### 2b. `/commish db migrate`
 
@@ -161,22 +187,23 @@ the database down.
 half the point. In a DM the bot works out the league from who you are; if you
 play in more than one, it asks which.
 
-The wizard asks for three things:
+The wizard asks for three things, in this order:
 
+- **Source type** — who's leaking it. `{team}` and `{manager}` are filled in from
+  your team and handle for the current season.
 - **Release type** — how loudly it's being said, from `rumor` up to
   `league release`.
-- **Source type** — who's saying it. `{team}` and `{manager}` are filled in from
-  your team and handle for the current season.
 - **Form** — the sentence it goes in. Right now that's the free form.
 
 Then you type the rumor, review it, and post it. It's recorded and announced to
 the rumor channel — **without naming you**. The source type is the attribution.
 
-**The heavier the release, the more senior a source it takes.** A `statement`
-has to come from your GM or President of Basketball Ops; a `league release` only
-from the Commissioner, which is limited to the Admin tier. A plain `rumor` will
-take anybody, down to `anonymous sources`. Release types you have no source for
-aren't offered at all, so you can't walk into a dead end.
+**The more senior the leaker, the heavier a release they can carry.** Pick your
+GM or President of Basketball Ops and a `statement` is on the table; the
+Commissioner — limited to the Verified tier — is the only one who can put out a
+`league release`. `anonymous sources` carry a plain `rumor` and nothing louder.
+Once you've picked the leaker, you're only offered the releases they can
+actually get out, so you can't walk into a dead end.
 
 ### Elo
 
@@ -194,20 +221,64 @@ config files.
 
 ## Permissions
 
-Three tiers. **The bot owner passes every check, everywhere. Server
-administrators pass both role tiers in their own server.**
+Four tiers, and they are a **ladder** — each one passes everything below it.
+**The bot owner passes every check, everywhere. Server administrators pass every
+role tier in their own server, and cannot be restricted.**
 
 | Tier | Configured as | Gates |
 |---|---|---|
 | **Bot owner** | not configurable | `/sql`, `/setup global` |
-| **Commissioner** | `commissioner_roles`, default `Commish` | `/commish load\|sync\|publish\|dump`, all of `/commish db`, `/commish season add\|platform\|current` |
-| **Admin** | `admin_roles`, default `mods`, `Champion`, `Commish` | `/setup`, `/verify add\|remove`, `/commish leagues\|status`, `/commish season list`, and the Commissioner source in `/rumor` |
+| **Admin** | `admin_roles`, default `Commish` | `/commish load\|sync\|publish\|dump`, all of `/commish db`, `/commish season add\|platform\|current`, `/verify add\|remove` |
+| **Verified** | `verified_roles`, default `mods`, `Champion` | `/setup`, `/commish leagues\|status`, `/commish season list`, and the Commissioner source in `/rumor` |
+| **Normal** | not a role list | everything else — the default |
+| **Restricted** | `restricted_roles`, empty by default | *denied* every command bar `/help` and `/verify show` |
 
-Roles are matched **by name**, per server — so renaming a role in Discord
-silently unconfigures it. `/verify show` tells you where you stand and flags
-configured names that don't match any live role.
+**Normal isn't configurable, and can't be.** It's simply every command that has
+no tier on it — being undecorated is what it means. It only became worth naming
+once Restricted existed to sit below it.
 
-Manage them with `/verify add tier:… role:@Role` and `/verify remove`.
+**Restricted overrides the ladder rather than sitting under it.** Somebody who
+holds both an Admin role and a restricted one is shut out; the deny is checked
+before the command's own permissions, so it never has to out-argue a grant. It's
+enforced once for the whole command tree rather than per command, which is why a
+command added later is covered without anyone marking it.
+
+**A DM isn't a way round it.** The tree check can only read the server a command
+was typed in, and `/rumor` — the one group that works in a DM — would otherwise
+let somebody shut out of a league report into it from a private window. It asks
+the league's own server once it knows which league is meant, for reporting and
+for reading alike.
+
+A role belongs in **one** list, the highest that should hold it — Admin already
+passes every Verified check, so listing it twice only invites somebody to remove
+it from one and assume the other still covers it.
+
+Roles are matched **by name** and exactly, per server — so renaming a role in
+Discord silently unconfigures it. `/verify show` tells you where you stand, and
+says *why* for each tier.
+
+Manage them with `/verify add tier:… role:@Role` and `/verify remove`. **Only a
+Discord server administrator can change the Admin list** — a tier that can hand
+itself out isn't a tier. An Admin can edit Verified and Restricted.
+
+Three things about this that catch people out. **Bot owners and Discord server
+administrators pass without the configured roles being read at all**, so in a
+server whose testers all hold Administrator, a role list matching nothing still
+looks like it works — test with somebody who holds neither. **An Admin passes
+Verified checks by implication**, so removing a role from `verified_roles` may
+change nothing for the people who also hold Admin; `/verify show` says when that
+is what happened. And **a server that stores its own list stops following the
+defaults**: these keys have no inherit path, so a name added to the built-in
+defaults later never reaches a server that has already used `/verify add`.
+
+### Upgrading from the two-tier setup
+
+The old `commissioner_roles` became `admin_roles`, and the old `admin_roles`
+(the *lower* of the two tiers) became `verified_roles`. Stored server files are
+migrated automatically on the first start, and stamped with a `_schema: 2`
+marker so it happens exactly once. Nothing to run by hand — but the rename means
+a v1 file's `admin_roles` is deliberately read as *Verified*, since that is what
+it granted before.
 
 ## Troubleshooting
 
@@ -227,6 +298,11 @@ season's rosters were never scraped.
 it. `/setup rumorchannel` re-points it and warns you up front if permissions are
 missing. Rumors filed meanwhile are still recorded.
 
+**The bot came back and said nothing** — restart notices are per-server and off
+by default: `/setup restartnotices state:On`, and `/setup defaultchannel` for
+somewhere to put them. `/setup show` lists both. If they're on and set, check the
+bot can post in that channel; the log says so when it can't.
+
 **No rumor step in the wizard, or `/setup rumorchannel` declines** — the bot
 doesn't think this server runs a league. Bind one with `/commish load` (or the
 wizard's league step) and adopt its database row with `/commish db migrate`;
@@ -239,4 +315,5 @@ shows the connection and how many queries are registered.
 
 **You edited a file in `sql/queries/`** — the registry skips files it has
 already logged, so delete `sql/manager.log.json` and `sql/queries/_queries.json`
-and restart to pick the change up.
+and restart to pick the change up. A bot owner can restart from Discord with
+`/restart`, wherever the bot runs under systemd.

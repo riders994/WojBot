@@ -23,3 +23,6 @@ __pycache__/
 
 # Editors
 .idea/
+
+# Restart marker: written by /restart, consumed by the next start.
+resources/state/
