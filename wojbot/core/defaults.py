@@ -23,10 +23,21 @@ INHERITED_FROM_BOT: tuple[str, ...] = ("dad_joke",)
 DEFAULT_SERVER_CONFIG: dict = {
     # Falls back to the bot-wide setting before this one; see INHERITED_FROM_BOT.
     "dad_joke": False,
-    # Role names that grant command privileges (see wojbot.core.checks). The bot
+    # Role names that grant each privilege tier (see wojbot.core.checks). The bot
     # owner and Discord server administrators always pass regardless of these.
-    "commissioner_roles": ["Commish"],
-    "admin_roles": ["mods", "Champion", "Commish"],
+    #
+    # The tiers are a **ladder** -- Admin passes every Verified check -- so a
+    # role belongs in exactly one list, the highest that should hold it. That is
+    # why `Commish` is not repeated in verified_roles the way it was in the old
+    # two-tier defaults: it would be redundant, and a redundant entry invites
+    # somebody to remove it from one list and assume the other still covers it.
+    "admin_roles": ["Commish"],
+    "verified_roles": ["mods", "Champion"],
+    # The one tier that takes something away rather than granting it, so it
+    # starts empty: a server has to decide to restrict somebody. Enforced once,
+    # globally, by the tree check in wojbot.bot rather than per command -- see
+    # wojbot.core.checks.evaluate_restriction for why it cannot be a decorator.
+    "restricted_roles": [],
     # Which configured Elo league (a key in resources/configs/sys_config.yml)
     # this server drives. Bound by /commish load; None until a commish loads one.
     "elo_league": None,

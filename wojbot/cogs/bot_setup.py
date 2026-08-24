@@ -45,10 +45,10 @@ from discord import app_commands
 from discord.ext import commands
 
 from ..core.checks import (
-    ADMIN_ROLES_KEY,
-    COMMISSIONER_ROLES_KEY,
+    TIER_LABELS,
+    TIER_LADDER,
     is_bot_owner,
-    is_privileged,
+    is_verified,
 )
 from ..core.elo import (
     ELO_SYS_CONFIG,
@@ -64,7 +64,11 @@ log = logging.getLogger(__name__)
 DAD_JOKE_KEY = "dad_joke"
 WIZARD_TIMEOUT = 300.0
 
-TIERS = ((COMMISSIONER_ROLES_KEY, "Commissioner"), (ADMIN_ROLES_KEY, "Admin"))
+# The tiers the setup wizard offers, highest first -- the positive ladder only.
+# Restricted is deliberately not here: this flow is about granting a new server's
+# roles, and a wizard that asked who to shut out during onboarding would be
+# asking the wrong question. It is managed from /verify instead.
+TIERS = tuple((key, TIER_LABELS[key]) for key in TIER_LADDER)
 
 # Every inherited setting's server-side toggle offers these three: the two
 # values, plus giving the choice back so the bot-wide default applies again.
@@ -498,7 +502,7 @@ class BotSetup(commands.Cog):
         return "**Outstanding**\n" + "\n".join(f"• {s}" for s in steps)
 
     @group.command(name="show", description="Show this server's settings and what's left to do.")
-    @is_privileged()
+    @is_verified()
     async def show(self, interaction: discord.Interaction) -> None:
         guild = interaction.guild
         # Deferred for the one check that can reach the database; everything
@@ -546,7 +550,7 @@ class BotSetup(commands.Cog):
         name="rumorchannel", description="Set the channel reported rumors post to."
     )
     @app_commands.describe(channel="Where /rumor report announces to")
-    @is_privileged()
+    @is_verified()
     async def rumorchannel(
         self, interaction: discord.Interaction, channel: discord.TextChannel
     ) -> None:
@@ -579,7 +583,7 @@ class BotSetup(commands.Cog):
     @group.command(name="dadjokes", description="Turn dad jokes on or off for this server.")
     @app_commands.describe(state="On, off, or follow whatever the bot-wide default is")
     @app_commands.choices(state=STATE_CHOICES)
-    @is_privileged()
+    @is_verified()
     async def dadjokes(
         self, interaction: discord.Interaction, state: app_commands.Choice[str]
     ) -> None:
@@ -601,7 +605,7 @@ class BotSetup(commands.Cog):
         )
 
     @group.command(name="wizard", description="Walk through setting this server up.")
-    @is_privileged()
+    @is_verified()
     async def wizard(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
         view = await SetupWizard.create(self, interaction)

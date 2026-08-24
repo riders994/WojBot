@@ -66,7 +66,7 @@ from discord import app_commands
 from discord.ext import commands
 from psycopg2 import sql as psql
 
-from ..core.checks import is_commissioner, is_privileged
+from ..core.checks import is_admin, is_verified
 from ..core.discord_anon import CATEGORY_MANAGER, CATEGORY_SERVER
 from ..core.elo import (
     ELO_SYS_CONFIG,
@@ -136,7 +136,7 @@ class Commish(commands.Cog):
     # --- read-only (privileged) ------------------------------------------
 
     @group.command(name="leagues", description="List the configured Elo leagues.")
-    @is_privileged()
+    @is_verified()
     async def leagues(self, interaction: discord.Interaction) -> None:
         try:
             cfg = yaml.safe_load(ELO_SYS_CONFIG.read_text()) or {}
@@ -163,7 +163,7 @@ class Commish(commands.Cog):
         )
 
     @group.command(name="status", description="Show the league loaded for this server.")
-    @is_privileged()
+    @is_verified()
     async def status(self, interaction: discord.Interaction) -> None:
         system = self._loaded_system(interaction.guild_id)
         if system is None:
@@ -181,7 +181,7 @@ class Commish(commands.Cog):
     @app_commands.describe(
         league="League key from sys_config (defaults to this server's, then the system default)"
     )
-    @is_commissioner()
+    @is_admin()
     async def load(
         self, interaction: discord.Interaction, league: str | None = None
     ) -> None:
@@ -202,7 +202,7 @@ class Commish(commands.Cog):
     @group.command(
         name="sync", description="Sync members & teams to the database (scrapes each season)."
     )
-    @is_commissioner()
+    @is_admin()
     async def sync(self, interaction: discord.Interaction) -> None:
         system = self._loaded_system(interaction.guild_id)
         if system is None:
@@ -228,7 +228,7 @@ class Commish(commands.Cog):
         )
 
     @group.command(name="publish", description="Run and publish the league's Elo ratings.")
-    @is_commissioner()
+    @is_admin()
     async def publish(self, interaction: discord.Interaction) -> None:
         system = self._loaded_system(interaction.guild_id)
         if system is None:
@@ -264,7 +264,7 @@ class Commish(commands.Cog):
         )
 
     @group.command(name="dump", description="Back up the league's config files.")
-    @is_commissioner()
+    @is_admin()
     async def dump(self, interaction: discord.Interaction) -> None:
         system = self._loaded_system(interaction.guild_id)
         if system is None:
@@ -307,7 +307,7 @@ class Commish(commands.Cog):
         return system, league
 
     @season.command(name="list", description="List the seasons configured for this league.")
-    @is_privileged()
+    @is_verified()
     async def season_list(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
         system, league = await self._league(interaction)
@@ -361,7 +361,7 @@ class Commish(commands.Cog):
         sync="Also register the season's managers & teams in the database",
         overwrite="Replace the season if it is already configured",
     )
-    @is_commissioner()
+    @is_admin()
     async def season_add(
         self,
         interaction: discord.Interaction,
@@ -480,7 +480,7 @@ class Commish(commands.Cog):
         platform="Platform name (defaults to the league's current one)",
         year="Season to pin (leave blank to pin every season that names none)",
     )
-    @is_commissioner()
+    @is_admin()
     async def season_platform(
         self,
         interaction: discord.Interaction,
@@ -564,7 +564,7 @@ class Commish(commands.Cog):
     @app_commands.describe(
         year="The season to make current (leave blank for the latest configured)"
     )
-    @is_commissioner()
+    @is_admin()
     async def season_current(
         self, interaction: discord.Interaction, year: int | None = None
     ) -> None:
@@ -634,7 +634,7 @@ class Commish(commands.Cog):
         return system.elo_sql
 
     @db.command(name="leagues", description="List the leagues in the database.")
-    @is_commissioner()
+    @is_admin()
     async def db_leagues(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
         elo_sql = await self._db_backend(interaction)
@@ -668,7 +668,7 @@ class Commish(commands.Cog):
         league="Only this league's managers (defaults to all)",
         search="Only managers whose name (real or platform) matches this",
     )
-    @is_commissioner()
+    @is_admin()
     async def db_managers(
         self,
         interaction: discord.Interaction,
@@ -727,7 +727,7 @@ class Commish(commands.Cog):
 
     @db.command(name="link", description="Link THIS server to a league in the database.")
     @app_commands.describe(league_id="Target league_id (see /commish db leagues)")
-    @is_commissioner()
+    @is_admin()
     async def db_link(self, interaction: discord.Interaction, league_id: int) -> None:
         await interaction.response.defer(ephemeral=True)
         elo_sql = await self._db_backend(interaction)
@@ -762,7 +762,7 @@ class Commish(commands.Cog):
     @app_commands.describe(
         league_id="Target league_id (see /commish db leagues)", name="New league name"
     )
-    @is_commissioner()
+    @is_admin()
     async def db_rename(
         self, interaction: discord.Interaction, league_id: int, name: str
     ) -> None:
@@ -789,7 +789,7 @@ class Commish(commands.Cog):
         manager_id="Target manager_id (see /commish db managers)",
         user="The Discord user to attach",
     )
-    @is_commissioner()
+    @is_admin()
     async def db_linkuser(
         self, interaction: discord.Interaction, manager_id: int, user: discord.User
     ) -> None:
@@ -828,7 +828,7 @@ class Commish(commands.Cog):
         name="The manager's name",
         user="Discord user to attach to the new manager (optional)",
     )
-    @is_commissioner()
+    @is_admin()
     async def db_adduser(
         self,
         interaction: discord.Interaction,
@@ -883,7 +883,7 @@ class Commish(commands.Cog):
         description="Adopt an existing SQL league for THIS server (do this before linking users).",
     )
     @app_commands.describe(league="League key to convert (defaults to this server's)")
-    @is_commissioner()
+    @is_admin()
     async def db_migrate(
         self, interaction: discord.Interaction, league: str | None = None
     ) -> None:

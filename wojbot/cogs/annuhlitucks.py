@@ -24,7 +24,7 @@ from discord import app_commands
 from discord.ext import commands
 from elo_system.tools.basics import WEEK_STR
 
-from ..core.checks import is_commissioner
+from ..core.checks import is_admin
 from ..core.elo import get_or_build
 
 log = logging.getLogger(__name__)
@@ -293,7 +293,7 @@ class Annuhlitucks(commands.Cog):
         overwrite="Recalculate weeks that are already rated",
         publish="Save the results to the configured backend",
     )
-    @is_commissioner()
+    @is_admin()
     async def run(
         self,
         interaction: discord.Interaction,

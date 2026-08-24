@@ -30,7 +30,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from ..core import rumor as rumors
-from ..core.checks import ADMIN_ROLES_KEY, has_privilege_in_guild
+from ..core.checks import VERIFIED_ROLES_KEY, has_privilege_in_guild
 from ..core.format import chunk
 from ..core.rumor import RUMOR_CHANNEL_KEY
 
@@ -204,7 +204,7 @@ class RumorWizard(discord.ui.View):
             self.bot,
             league.guild_id or self.invoking_guild_id,
             self.user,
-            ADMIN_ROLES_KEY,
+            VERIFIED_ROLES_KEY,
         )
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
