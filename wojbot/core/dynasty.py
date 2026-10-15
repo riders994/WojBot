@@ -12,13 +12,9 @@ scrapes every season, works out where each one starts on the timeline, and
 replays them all into the dynasty frame. This module wraps it for the bot, for
 two reasons the package can't see from where it sits:
 
-**The current season's length is the schedule, not what has been played.** On
-Fantrax ``current_season_length`` counts every period on the schedule, so a
-season that has only just started reports all of them -- and the replay rates
-``0:current_season_length`` for every season, which would invent a result for
-each week nobody has played yet. So for the duration of the conversion the
-current season's length is held at the last week its own ratings reach, and put
-back afterwards.
+**The dynasty frame is seeded from whichever season frame comes first.** The
+replay copies the first season frame it generates, so every season is given a
+frame of its own before the conversion starts -- see :func:`enable`.
 
 **The package declines quietly.** ``change_dynasty`` returns the flag rather than
 raising when a league can't be converted, so the reasons are checked here first,
@@ -153,9 +149,8 @@ def enable(system) -> DynastyResult:
         _save(system)
         return _result(league, flag_only=True)
 
-    # Scrape every season up front. The package would do it inside the
-    # conversion, but a scrape resets a season's length to the platform's, and
-    # the current season's has to be held down (below) after that has happened.
+    # Scrape every season up front: a season never scraped has no length on
+    # file, and the frames below can't tell whether it is fully rated without one.
     for year in sorted(league.seasons):
         league.add_league(year)
 
@@ -172,22 +167,10 @@ def enable(system) -> DynastyResult:
         elif not fm.validate_season(year):
             league.run_season(year)
 
-
-    season = league.seasons.get(current)
-    original = None
-    if season is not None:
-        original = season.get("current_season_length")
-        rated = last_seasonal_week(fm.seasonal_elo.get(current))
-        if original is None or rated < original:
-            season["current_season_length"] = rated
-    try:
-        league.change_dynasty(True)
-    finally:
-        if season is not None:
-            if original is None:
-                season.pop("current_season_length", None)
-            else:
-                season["current_season_length"] = original
+    # The replay rates every season through current_season_length, which since
+    # elo_system 2.0.2 is the weeks actually played on every platform -- before
+    # it, Fantrax counted the whole schedule and the replay invented results.
+    league.change_dynasty(True)
 
     if not league.is_dynasty:
         # Every reason the package checks was checked above; landing here means
@@ -214,29 +197,3 @@ def disable(system) -> DynastyResult:
     _save(system)
     return _result(league)
 
-
-def rate_season_alongside(league, year: int, weeks: list[int], overwrite: bool = False) -> None:
-    """In a dynasty league, bring the season's own frame up to the last of ``weeks``.
-
-    elo_system rates a dynasty league into the dynasty frame only, so the
-    season's frame stops at week 0 -- and a server that reports seasonal
-    ratings would have nothing to show. This rates each week the season's
-    frame is missing, the same way the engine rates a non-dynasty week (see
-    ``EloLeague._run_one``), off the season's own week 0 rather than the
-    carried-over dynasty ratings.
-
-    Expects :meth:`EloLeague.run_prep` to have run for ``year``, which is what
-    sets the formatter, calculator and current season. ``overwrite`` rerates
-    the weeks asked for that are already on file, as it does for the dynasty
-    frame; the weeks before them are only filled in, never rerated.
-    """
-    fm = league.frame_manager
-    fm.generate(year, overwrite=False)
-    frame = fm.seasonal_elo[year]
-    first = last_seasonal_week(frame) + 1
-    if overwrite:
-        first = min(first, weeks[0])
-    for week in range(max(first, 1), weeks[-1] + 1):
-        scores = league.formatter(league.league_type, league.current_league.get_week(week))
-        scores["opponent"] = league._rename(scores, year)
-        league.calculator(frame, scores, week, overwrite, league.k, scoring=league.scoring)

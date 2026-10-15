@@ -25,7 +25,7 @@ from discord.ext import commands
 from elo_system.tools.basics import WEEK_STR
 
 from ..core.checks import is_admin
-from ..core.dynasty import rate_season_alongside
+from ..core.dynasty import last_seasonal_week
 from ..core.elo import (
     ELO_REPORT_KEY,
     REPORT_DYNASTY,
@@ -356,13 +356,25 @@ class Annuhlitucks(commands.Cog):
                     f"Week {weeks[0] - 1} isn't rated yet, so week {weeks[0]} can't be. "
                     f"Run `{rated + 1}:{weeks[-1]}` to catch up."
                 )
+            # A dynasty league rates the season's own frame too, off the same
+            # scores -- but where the season's previous week is missing, the
+            # engine skips it without a word and the dynasty week lands alone.
+            # The season can fall behind that way (a league rated before
+            # elo_system 2.0.2 rated only the dynasty), so it is checked as
+            # well. Running the range is safe: dynasty weeks already on file
+            # are left alone unless overwrite is set.
+            if league.is_dynasty and weeks[0] > 0:
+                season_rated = last_seasonal_week(league.frame_manager.seasonal_elo.get(year))
+                if season_rated < weeks[0] - 1:
+                    raise ValueError(
+                        f"This season's own ratings stop at week {season_rated}, so week "
+                        f"{weeks[0]} can't be rated for it. Run `{season_rated + 1}:"
+                        f"{weeks[-1]}` to catch up — the dynasty weeks already rated "
+                        "are left as they are."
+                    )
 
             for target in weeks:
                 league.run(target, year, overwrite)
-            if league.is_dynasty and REPORT_SEASONAL in scopes:
-                # The engine rates a dynasty league into the dynasty frame only;
-                # the season's own frame is brought along so it can be reported.
-                rate_season_alongside(league, year, weeks, overwrite)
 
             reports = []
             for scope in scopes:
