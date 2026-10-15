@@ -51,9 +51,14 @@ from ..core.checks import (
     is_verified,
 )
 from ..core.elo import (
+    ELO_REPORT_KEY,
     ELO_SYS_CONFIG,
     GUILD_LEAGUE_KEY,
+    REPORT_BOTH,
+    REPORT_DYNASTY,
+    REPORT_SEASONAL,
     build_system,
+    cached_system,
     configured_league,
     database_league,
     plan_load,
@@ -87,6 +92,12 @@ STATE_CHOICES = [
 # bot-wide default for it to fall back to, and offering "follow the default"
 # where none exists would be a choice that does nothing.
 TOGGLE_CHOICES = STATE_CHOICES[:2]
+
+ELO_REPORT_CHOICES = [
+    app_commands.Choice(name="Seasonal — this season on its own", value=REPORT_SEASONAL),
+    app_commands.Choice(name="Dynasty — the all-time timeline", value=REPORT_DYNASTY),
+    app_commands.Choice(name="Both", value=REPORT_BOTH),
+]
 
 
 def describe_setting(configs, guild_id: int, key: str) -> str:
@@ -609,6 +620,7 @@ class BotSetup(commands.Cog):
             lines.append(f"**{label} roles:** {shown}{gone}")
         league = configured_league(self.bot, guild.id)
         lines.append(f"**League:** `{league}`" if league else "**League:** not bound")
+        lines.append(f"**Elo reports:** {config[ELO_REPORT_KEY]} (dynasty leagues only)")
         if is_league:
             lines.append(
                 f"**Rumor channel:** "
@@ -642,6 +654,7 @@ class BotSetup(commands.Cog):
         embed.set_footer(
             text="Roles: /verify · dad jokes: /dadjokes · league: /commish · "
                  "rumors: /setup rumorchannel · notices: /setup restartnotices · "
+                 "Elo reports: /setup eloreport · "
                  "or walk through it with /setup wizard"
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
@@ -755,6 +768,34 @@ class BotSetup(commands.Cog):
             "both the ones I'm asked for and the ones I'm not.",
             ephemeral=True,
         )
+
+    @group.command(
+        name="eloreport",
+        description="Choose which ratings a dynasty league's Elo reports show.",
+    )
+    @app_commands.describe(ratings="Seasonal, dynasty, or both")
+    @app_commands.choices(ratings=ELO_REPORT_CHOICES)
+    @is_verified()
+    async def eloreport(
+        self, interaction: discord.Interaction, ratings: app_commands.Choice[str]
+    ) -> None:
+        guild_id = interaction.guild_id
+        self.bot.configs.set_guild(guild_id, {ELO_REPORT_KEY: ratings.value})
+        shown = {
+            REPORT_SEASONAL: "this season's ratings",
+            REPORT_DYNASTY: "the all-time dynasty ratings",
+            REPORT_BOTH: "both this season's and the all-time dynasty ratings",
+        }[ratings.value]
+        lines = [f"`/elo run` will now show {shown}."]
+        # Said up front, since the setting otherwise looks like it did nothing.
+        system = cached_system(self.bot, guild_id)
+        league = getattr(system, "elo_league", None)
+        if league is not None and league.loaded and not league.is_dynasty:
+            lines.append(
+                "This server's league isn't a dynasty, so it only has seasonal "
+                "ratings — this takes effect if it becomes one."
+            )
+        await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
     @group.command(name="dadjokes", description="Turn dad jokes on or off for this server.")
     @app_commands.describe(state="On, off, or follow whatever the bot-wide default is")

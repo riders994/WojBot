@@ -213,3 +213,30 @@ def disable(system) -> DynastyResult:
     league.frame_manager.set_is_dynasty(False)
     _save(system)
     return _result(league)
+
+
+def rate_season_alongside(league, year: int, weeks: list[int], overwrite: bool = False) -> None:
+    """In a dynasty league, bring the season's own frame up to the last of ``weeks``.
+
+    elo_system rates a dynasty league into the dynasty frame only, so the
+    season's frame stops at week 0 -- and a server that reports seasonal
+    ratings would have nothing to show. This rates each week the season's
+    frame is missing, the same way the engine rates a non-dynasty week (see
+    ``EloLeague._run_one``), off the season's own week 0 rather than the
+    carried-over dynasty ratings.
+
+    Expects :meth:`EloLeague.run_prep` to have run for ``year``, which is what
+    sets the formatter, calculator and current season. ``overwrite`` rerates
+    the weeks asked for that are already on file, as it does for the dynasty
+    frame; the weeks before them are only filled in, never rerated.
+    """
+    fm = league.frame_manager
+    fm.generate(year, overwrite=False)
+    frame = fm.seasonal_elo[year]
+    first = last_seasonal_week(frame) + 1
+    if overwrite:
+        first = min(first, weeks[0])
+    for week in range(max(first, 1), weeks[-1] + 1):
+        scores = league.formatter(league.league_type, league.current_league.get_week(week))
+        scores["opponent"] = league._rename(scores, year)
+        league.calculator(frame, scores, week, overwrite, league.k, scoring=league.scoring)

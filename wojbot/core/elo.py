@@ -26,6 +26,28 @@ ELO_SYS_CONFIG = ELO_CONFIG_DIR / "sys_config.yml"
 # Per-guild config key: which configured league this server drives.
 GUILD_LEAGUE_KEY = "elo_league"
 
+# Per-guild config key: which ratings a dynasty league's Elo reports show.
+# A dynasty league keeps two -- each season on its own, and the all-time
+# timeline -- and a server picks which it hears about. A league that isn't a
+# dynasty only has the one, so this changes nothing for it.
+ELO_REPORT_KEY = "elo_report"
+REPORT_SEASONAL = "seasonal"
+REPORT_DYNASTY = "dynasty"
+REPORT_BOTH = "both"
+REPORT_CHOICES = (REPORT_SEASONAL, REPORT_DYNASTY, REPORT_BOTH)
+
+
+def report_scopes(setting: str | None, is_dynasty: bool) -> list[str]:
+    """Which ratings a report shows: ``seasonal``, ``dynasty``, or both, in order."""
+    if not is_dynasty:
+        return [REPORT_SEASONAL]
+    if setting == REPORT_DYNASTY:
+        return [REPORT_DYNASTY]
+    if setting == REPORT_BOTH:
+        return [REPORT_SEASONAL, REPORT_DYNASTY]
+    # Unset or unrecognised: seasonal, the server default.
+    return [REPORT_SEASONAL]
+
 
 def runtime_key(league: str | None) -> str:
     """Runtime registry key for a league's EloSystem."""

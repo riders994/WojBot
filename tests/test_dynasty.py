@@ -214,3 +214,50 @@ def test_last_seasonal_week(f, expected):
 def test_last_seasonal_week_stops_at_a_gap():
     f = frame(5).drop(columns=["week_3"])
     assert dynasty.last_seasonal_week(f) == 2
+
+
+# --- rating the season alongside the dynasty --------------------------------
+
+
+class SeasonLeague:
+    """Just what rate_season_alongside touches, recording each week rated."""
+
+    league_type, k, scoring = "nfl", 60, "median"
+
+    def __init__(self, rated_through: int):
+        self.frame_manager = FakeFrameManager({2026: frame(rated_through)})
+        self.rated: list = []
+        self.current_league = self
+
+    def get_week(self, week):
+        return {"week": week}
+
+    def formatter(self, league_type, scoreboard):
+        return dict(scoreboard)
+
+    def _rename(self, scores, year):
+        return "renamed"
+
+    def calculator(self, elo_frame, scores, week, overwrite, k, scoring):
+        assert elo_frame is self.frame_manager.seasonal_elo[2026]
+        assert scores == {"week": week, "opponent": "renamed"}
+        self.rated.append((week, overwrite))
+        elo_frame[f"week_{week}"] = 1500.0
+
+
+def test_the_season_catches_up_from_where_it_stopped():
+    league = SeasonLeague(rated_through=0)
+    dynasty.rate_season_alongside(league, 2026, [4, 5])
+    assert league.rated == [(w, False) for w in range(1, 6)]
+
+
+def test_overwrite_rerates_only_the_weeks_asked_for():
+    league = SeasonLeague(rated_through=5)
+    dynasty.rate_season_alongside(league, 2026, [4, 5], overwrite=True)
+    assert league.rated == [(4, True), (5, True)]
+
+
+def test_week_zero_rates_nothing():
+    league = SeasonLeague(rated_through=0)
+    dynasty.rate_season_alongside(league, 2026, [0])
+    assert league.rated == []
