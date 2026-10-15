@@ -55,6 +55,8 @@ from ..core.elo import (
     GUILD_LEAGUE_KEY,
     build_system,
     configured_league,
+    database_league,
+    plan_load,
     runtime_key,
 )
 from ..core.defaults import DEFAULT_CHANNEL_KEY
@@ -183,6 +185,8 @@ class SetupWizard(discord.ui.View):
         self.is_league = is_league
         self.step = 0
         self.done: list[str] = []
+        # Why the last league picked at the league step wasn't bound, if it wasn't.
+        self.league_refusal: str | None = None
         self._render()
 
     @classmethod
@@ -279,7 +283,8 @@ class SetupWizard(discord.ui.View):
             "\n\nThe league commands and the rumor mill only work once this "
             "server drives a league; skip it if this one doesn't."
         )
-        return f"{current}\n\nPick the Elo league this server drives.{note}"
+        refused = f"\n\n⚠️ {self.league_refusal}" if self.league_refusal else ""
+        return f"{current}\n\nPick the Elo league this server drives.{note}{refused}"
 
     def _body_default(self) -> str:
         # Branching rather than dropping describe_channel's "not set" into a
@@ -366,6 +371,21 @@ class SetupWizard(discord.ui.View):
             async def callback(interaction: discord.Interaction, select=select):
                 key = select.values[0]
                 await interaction.response.defer()
+                # The same rule /commish load follows: a server the database
+                # already links to a league can't have its Elo bound to another.
+                try:
+                    link = await database_league(self.bot, self.guild.id)
+                except Exception:  # noqa: BLE001 - the check is a guard, not a requirement
+                    log.exception("wizard: couldn't read this server's database link")
+                    link = None
+                plan = plan_load(key, configured_league(self.bot, self.guild.id), link)
+                self.league_refusal = plan.refusal
+                if plan.refusal is not None:
+                    # Shown on this step rather than added to self.done, which
+                    # only appears once the wizard is finished.
+                    self._render()
+                    await interaction.edit_original_response(embed=self._embed(), view=self)
+                    return
                 try:
                     # Same path /commish load takes, so the league is actually
                     # loaded rather than merely named in the config.
