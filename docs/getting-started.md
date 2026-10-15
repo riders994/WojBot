@@ -32,6 +32,20 @@ You need three things on the machine running the bot:
 
 Copy `.env.example` to `.env` and fill in `DISCORD_TOKEN`. `.env` is gitignored.
 
+The Elo configs in `resources/configs/` are gitignored too, because the bot
+writes to them as it runs. Only templates are tracked. Copy each one to its
+real name and fill it in:
+
+| Template | Copy to | What it holds |
+|---|---|---|
+| `sys_config.example.yml` | `sys_config.yml` | which leagues exist, and where ratings are stored |
+| `csv_config.example.yml` | `csv_config.yml` | where the ratings CSVs go |
+| `sql_config.example.yml` | `sql_config.yml` | the Elo engine's warehouse connection (holds a password) |
+| `ratings.example.yml` | `ratings_<league>.yml`, one per league | the league's platform, type and season ids |
+
+Per-server settings (`servers/`) and `bot_config.yaml` need no template: the
+bot creates them the first time a setting is changed.
+
 For the database, give the connection **either** as a whole string in
 `SQL_CONN_URI`, **or** as the discrete `SQL_HOST` / `SQL_PORT` / `SQL_USER` /
 `SQL_PASSWORD` / `SQL_DBNAME` fields. `SQL_CONN_URI` is checked first and wins

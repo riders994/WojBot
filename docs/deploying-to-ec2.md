@@ -630,11 +630,10 @@ from anywhere, including the Pi: it hardcodes absolute paths, and
 These are gitignored, so the clone doesn't have them:
 
 ```
-resources/configs/sql_config.yml
+resources/configs/                      (every live config, servers/ and leagues/ included;
+                                         only *.example.* templates are tracked)
 resources/anon/                         (the reversal maps)
 resources/ratings/                      (per-league Elo CSVs)
-resources/configs/servers/              (per-guild overrides)
-resources/configs/leagues/              (per-league overrides)
 ```
 
 **Copy them from the Pi, not from the workstation.** This is the reversal from
@@ -656,9 +655,7 @@ mkdir -p $S/resources/configs
 
 rsync -av $P/resources/anon/                $S/resources/anon/
 rsync -av $P/resources/ratings/             $S/resources/ratings/
-rsync -av $P/resources/configs/sql_config.yml $S/resources/configs/
-rsync -av --ignore-missing-args $P/resources/configs/servers/ $S/resources/configs/servers/
-rsync -av --ignore-missing-args $P/resources/configs/leagues/ $S/resources/configs/leagues/
+rsync -av $P/resources/configs/             $S/resources/configs/
 
 rsync -av $S/ pressbox:activity/WojBot/
 ```

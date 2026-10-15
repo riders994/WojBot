@@ -11,6 +11,13 @@ sql/queries/_queries.json
 resources/anon/
 resources/ratings/
 
+# Live configuration. The bot writes to these at runtime -- server settings,
+# league bindings, every season it scrapes -- so tracking them made the running
+# copy diverge from git, and an update touching one stopped the Pi updating.
+# Only the *.example.* templates are tracked; copy one to start a file.
+resources/configs/**
+!resources/configs/*.example.*
+
 # Python
 __pycache__/
 *.py[cod]

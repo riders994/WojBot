@@ -530,7 +530,7 @@ These are gitignored, so a clone won't have them:
 
 ```
 .env
-resources/configs/sql_config.yml
+resources/configs/                      (every live config; only *.example.* templates are tracked)
 resources/anon/anon_manager.json
 resources/anon/anon_manager_platform.json
 resources/ratings/                      (per-league Elo CSVs)
@@ -543,7 +543,7 @@ resolves the sources against the working directory
 cd /home/weezy/activity/WojBot
 rsync -av --relative \
   .env \
-  resources/configs/sql_config.yml \
+  resources/configs/ \
   resources/anon/ resources/ratings/ \
   wojingtonpost:activity/WojBot/
 ```
@@ -569,24 +569,13 @@ silently repoints names on rows that are already there.
 **Do not copy** `sql/manager.log.json` or `sql/queries/_queries.json`. They
 regenerate, and a stale log makes the bot skip registering the query files.
 
-**Check for `resources/configs/servers/` and `resources/configs/leagues/`.**
-`config_store.py` writes per-guild and per-league overrides there — the rumor
-channel, `admin_roles`, and which Elo league a server is bound to. They are
-created lazily, so on a workstation where `/setup` has never persisted anything
-they won't exist, and the list above is complete. If they *do* exist they carry
-settings nothing else can reconstruct, and they belong in the rsync:
-
-```bash
-rsync -av --relative --ignore-missing-args \
-  resources/configs/servers/ resources/configs/leagues/ \
-  wojingtonpost:activity/WojBot/
-```
-
-`--ignore-missing-args` is what keeps that a no-op rather than an error when
-they're absent. Where they don't exist, the new Pi falls back to
-`wojbot/core/defaults.py` — `rumor_channel: None`, so **rumors record but go
-unannounced until you run `/setup rumorchannel` again on the new box**. Budget
-for redoing the per-server setup rather than being surprised by it.
+**`resources/configs/` carries settings nothing else can reconstruct.** Beyond
+the ratings configs, `config_store.py` writes per-guild and per-league overrides
+under `servers/` and `leagues/`: the rumor channel, `admin_roles`, and which Elo
+league a server is bound to. Those two are created lazily, so they may not
+exist yet; copying the whole directory takes them when they do. Without them
+the new Pi falls back to `wojbot/core/defaults.py` -- `rumor_channel: None`, so
+**rumors record but go unannounced until you run `/setup rumorchannel` again**.
 
 Note that `.env` and `resources/configs/sql_config.yml` arrive on the new Pi
 still naming `thegoldenunasinn`. Step 6 is where that gets fixed, and it has to
