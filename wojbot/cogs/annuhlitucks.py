@@ -38,8 +38,8 @@ log = logging.getLogger(__name__)
 
 MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
 
-# Rows in a run report before it is cut short. A dynasty frame is indexed by
-# every member who has ever played, which outgrows an embed description.
+# Rows in a run report before it is cut short, so a large league can't outgrow
+# an embed description.
 MAX_ROWS = 25
 
 # How a report names each kind of rating, for a league that has both.
@@ -98,6 +98,29 @@ def _last_rated_week(league, year: int, frame) -> int:
     return week
 
 
+def _season_year(system, seasons, season: int | None):
+    """``season``, else the current sports year, else the latest on file."""
+    if season is not None:
+        return season
+    current = (system.ratings_config or {}).get("current_sports_year")
+    return current if current in seasons else (max(seasons) if seasons else None)
+
+
+def _in_league(series, league, year):
+    """Only the members playing in ``year``, ranked among themselves.
+
+    A dynasty frame keeps a row for everyone who has ever played, since a
+    manager who comes back picks up where they left off -- but a standings
+    list that still ranks somebody who left two seasons ago reads as wrong.
+    A season with no members on file (never scraped) is left unfiltered
+    rather than shown empty.
+    """
+    members = {str(m) for m in ((league.seasons.get(year) or {}).get("league_members") or {})}
+    if series is None or not members:
+        return series
+    return series[[str(m) in members for m in series.index]]
+
+
 def _member_names(league) -> dict:
     """member id -> team name. Seasons are walked in order, so the latest wins.
 
@@ -140,7 +163,7 @@ class Annuhlitucks(commands.Cog):
     @group.command(name="standings", description="Show current Elo standings.")
     @app_commands.describe(
         season="Season year (defaults to the current one)",
-        dynasty="Show the all-time dynasty ratings instead of one season",
+        dynasty="Show the dynasty ratings (of that season's teams) instead of one season's",
     )
     async def standings(
         self,
@@ -164,12 +187,10 @@ class Annuhlitucks(commands.Cog):
             fm = league.frame_manager
             names = _member_names(league)
             if dynasty:
-                return "dynasty", _latest_series(fm.dynasty_elo), names
+                year = _season_year(system, league.seasons, season)
+                return "dynasty", _in_league(_latest_series(fm.dynasty_elo), league, year), names
             seasons = fm.seasonal_elo
-            year = season
-            if year is None:
-                current = (system.ratings_config or {}).get("current_sports_year")
-                year = current if current in seasons else (max(seasons) if seasons else None)
+            year = _season_year(system, seasons, season)
             if year not in seasons:
                 raise ValueError(
                     f"No ratings for season {season}. Available: "
@@ -202,7 +223,7 @@ class Annuhlitucks(commands.Cog):
     @app_commands.describe(
         member="Team name (or the platform account id)",
         season="Season year (defaults to the current one)",
-        dynasty="Look up the dynasty rating instead of one season",
+        dynasty="Look up the dynasty rating (among that season's teams) instead",
     )
     async def team(
         self,
@@ -228,12 +249,10 @@ class Annuhlitucks(commands.Cog):
             names = _member_names(league)
             if dynasty:
                 frame, label = fm.dynasty_elo, "dynasty"
+                year = _season_year(system, league.seasons, season)
             else:
                 seasons = fm.seasonal_elo
-                year = season
-                if year is None:
-                    current = (system.ratings_config or {}).get("current_sports_year")
-                    year = current if current in seasons else (max(seasons) if seasons else None)
+                year = _season_year(system, seasons, season)
                 if year not in seasons:
                     raise ValueError(
                         f"No ratings for season {season}. Available: "
@@ -243,6 +262,10 @@ class Annuhlitucks(commands.Cog):
             series = _latest_series(frame)
             if series is None:
                 return label, None
+            everyone = series
+            if dynasty:
+                # Ranked among the league as it stands, like /elo standings.
+                series = _in_league(series, league, year)
             # Match on the team name case-insensitively: exact first, else a
             # unique substring. The frame is indexed by platform account id —
             # a readable owner name on Fantrax, a bare number on Sleeper — so
@@ -262,6 +285,16 @@ class Annuhlitucks(commands.Cog):
                         "Matches several members: " + ", ".join(labels[h] for h in hits)
                     )
             if match is None:
+                gone = [
+                    str(names.get(i, i)) for i in everyone.index
+                    if i not in series.index
+                    and (query in str(names.get(i, i)).lower() or str(i).lower() == query)
+                ]
+                if gone:
+                    raise ValueError(
+                        f"{', '.join(gone)} isn't in the league in {year}, so has no "
+                        "dynasty standing to show."
+                    )
                 raise ValueError(f"No member matching '{member}'.")
             rating = float(series.loc[match])
             rank = list(series.index).index(match) + 1
@@ -389,6 +422,8 @@ class Annuhlitucks(commands.Cog):
                         "scored it yet."
                     )
                 after = frame[column(weeks[-1])].dropna().sort_values(ascending=False)
+                if scope == REPORT_DYNASTY:
+                    after = _in_league(after, league, year)
                 # What these weeks moved, against the week before them. Read after
                 # the run, since a season frame may only just have caught up to it.
                 deltas = {}
