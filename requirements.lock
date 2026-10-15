@@ -14,7 +14,7 @@ charset-normalizer==3.4.9
     # via requests
 discord-py==2.7.1
     # via wojbot (pyproject.toml)
-elo-system==2.0.1
+elo-system==2.0.2
     # via wojbot (pyproject.toml)
 frozenlist==1.8.0
     # via

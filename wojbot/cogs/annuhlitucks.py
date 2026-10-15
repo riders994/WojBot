@@ -25,7 +25,14 @@ from discord.ext import commands
 from elo_system.tools.basics import WEEK_STR
 
 from ..core.checks import is_admin
-from ..core.elo import get_or_build
+from ..core.dynasty import last_seasonal_week
+from ..core.elo import (
+    ELO_REPORT_KEY,
+    REPORT_DYNASTY,
+    REPORT_SEASONAL,
+    get_or_build,
+    report_scopes,
+)
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +41,9 @@ MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
 # Rows in a run report before it is cut short. A dynasty frame is indexed by
 # every member who has ever played, which outgrows an embed description.
 MAX_ROWS = 25
+
+# How a report names each kind of rating, for a league that has both.
+SCOPE_LABELS = {REPORT_SEASONAL: "season", REPORT_DYNASTY: "dynasty"}
 
 
 def _latest_series(frame):
@@ -306,6 +316,7 @@ class Annuhlitucks(commands.Cog):
         system = await self._system(interaction)
         if system is None:
             return
+        setting = self.bot.configs.get_guild(interaction.guild_id).get(ELO_REPORT_KEY)
 
         def _work():
             league = system.elo_league
@@ -313,6 +324,7 @@ class Annuhlitucks(commands.Cog):
                 raise RuntimeError("League config not loaded")
             if not league.loaded:
                 league.load()
+            scopes = report_scopes(setting, league.is_dynasty)
             year = season if season is not None else league.current_sports_year
             if year not in league.seasons:
                 raise ValueError(
@@ -344,36 +356,55 @@ class Annuhlitucks(commands.Cog):
                     f"Week {weeks[0] - 1} isn't rated yet, so week {weeks[0]} can't be. "
                     f"Run `{rated + 1}:{weeks[-1]}` to catch up."
                 )
+            # A dynasty league rates the season's own frame too, off the same
+            # scores -- but where the season's previous week is missing, the
+            # engine skips it without a word and the dynasty week lands alone.
+            # The season can fall behind that way (a league rated before
+            # elo_system 2.0.2 rated only the dynasty), so it is checked as
+            # well. Running the range is safe: dynasty weeks already on file
+            # are left alone unless overwrite is set.
+            if league.is_dynasty and weeks[0] > 0:
+                season_rated = last_seasonal_week(league.frame_manager.seasonal_elo.get(year))
+                if season_rated < weeks[0] - 1:
+                    raise ValueError(
+                        f"This season's own ratings stop at week {season_rated}, so week "
+                        f"{weeks[0]} can't be rated for it. Run `{season_rated + 1}:"
+                        f"{weeks[-1]}` to catch up — the dynasty weeks already rated "
+                        "are left as they are."
+                    )
 
-            # Snapshot the week before the run, so the report can show what these
-            # weeks moved rather than only where everyone ended up.
-            before = None
-            if weeks[0] > 0:
-                before = frame[_week_column(league, year, weeks[0] - 1)].dropna()
             for target in weeks:
                 league.run(target, year, overwrite)
 
-            # Re-read the frame: a dynasty run rebuilds it rather than mutating.
-            frame = _rated_frame(league, year)
-            column = _week_column(league, year, weeks[-1])
-            if frame.get(column) is None:
-                raise RuntimeError(
-                    f"Week {weeks[-1]} produced no ratings — the platform may not have "
-                    "scored it yet."
-                )
-            after = frame[column].dropna().sort_values(ascending=False)
-            deltas = {}
-            if before is not None:
-                deltas = {
-                    member: float(after[member] - before[member])
-                    for member in after.index.intersection(before.index)
-                }
+            reports = []
+            for scope in scopes:
+                # Re-read the frame: a dynasty run rebuilds it rather than mutating.
+                if scope == REPORT_DYNASTY:
+                    frame, column = _rated_frame(league, year), lambda w: _week_column(league, year, w)
+                else:
+                    frame, column = league.frame_manager.seasonal_elo[year], WEEK_STR.format
+                if frame.get(column(weeks[-1])) is None:
+                    raise RuntimeError(
+                        f"Week {weeks[-1]} produced no ratings — the platform may not have "
+                        "scored it yet."
+                    )
+                after = frame[column(weeks[-1])].dropna().sort_values(ascending=False)
+                # What these weeks moved, against the week before them. Read after
+                # the run, since a season frame may only just have caught up to it.
+                deltas = {}
+                if weeks[0] > 0 and frame.get(column(weeks[0] - 1)) is not None:
+                    before = frame[column(weeks[0] - 1)].dropna()
+                    deltas = {
+                        member: float(after[member] - before[member])
+                        for member in after.index.intersection(before.index)
+                    }
+                reports.append((scope, after, deltas))
             if publish:
                 system.publish()
-            return year, weeks, after, deltas, _member_names(league)
+            return year, weeks, reports, league.is_dynasty, _member_names(league)
 
         try:
-            year, weeks, after, deltas, names = await asyncio.to_thread(_work)
+            year, weeks, reports, is_dynasty, names = await asyncio.to_thread(_work)
         except Exception as exc:  # noqa: BLE001 - surface the reason to the caller
             log.exception("elo run failed")
             await interaction.followup.send(f"Couldn't run those weeks: `{exc}`")
@@ -381,33 +412,36 @@ class Annuhlitucks(commands.Cog):
         if publish:
             self.bot.leagues.invalidate(interaction.guild_id)
 
-        lines = []
-        for rank, (member, rating) in enumerate(after.items(), start=1):
-            if rank > MAX_ROWS:
-                lines.append(f"…and {len(after) - MAX_ROWS} more.")
-                break
-            trend = ""
-            if (delta := deltas.get(member)) is not None:
-                arrow = "▲" if delta > 0 else ("▼" if delta < 0 else "—")
-                trend = f"  ({arrow} {abs(delta):.0f})"
-            label = names.get(member, member)
-            lines.append(f"{MEDALS.get(rank, f'`{rank:>2}`')} **{label}** — {rating:.0f}{trend}")
-
         span = f"week {weeks[0]}" if len(weeks) == 1 else f"weeks {weeks[0]}–{weeks[-1]}"
         name = (system.ratings_config or {}).get("league_name", system.league)
-        embed = discord.Embed(
-            title=f"{name} — {year} {span}",
-            description="\n".join(lines),
-            colour=discord.Colour.blurple(),
-        )
-        embed.set_footer(
+        embeds = []
+        for scope, after, deltas in reports:
+            lines = []
+            for rank, (member, rating) in enumerate(after.items(), start=1):
+                if rank > MAX_ROWS:
+                    lines.append(f"…and {len(after) - MAX_ROWS} more.")
+                    break
+                trend = ""
+                if (delta := deltas.get(member)) is not None:
+                    arrow = "▲" if delta > 0 else ("▼" if delta < 0 else "—")
+                    trend = f"  ({arrow} {abs(delta):.0f})"
+                label = names.get(member, member)
+                lines.append(f"{MEDALS.get(rank, f'`{rank:>2}`')} **{label}** — {rating:.0f}{trend}")
+            # Only a dynasty league has two kinds of rating to tell apart.
+            kind = f" ({SCOPE_LABELS[scope]})" if is_dynasty else ""
+            embeds.append(discord.Embed(
+                title=f"{name} — {year} {span}{kind}",
+                description="\n".join(lines),
+                colour=discord.Colour.blurple(),
+            ))
+        embeds[-1].set_footer(
             text=(
                 f"Published via {system.writer_key}."
                 if publish
                 else "Not published — these ratings are in memory only."
             )
         )
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embeds=embeds)
 
 
 async def setup(bot: commands.Bot) -> None:

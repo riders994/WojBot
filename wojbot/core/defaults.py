@@ -46,6 +46,10 @@ DEFAULT_SERVER_CONFIG: dict = {
     # Which configured Elo league (a key in resources/configs/sys_config.yml)
     # this server drives. Bound by /commish load; None until a commish loads one.
     "elo_league": None,
+    # Which ratings /elo run reports for a dynasty league: "seasonal" (this
+    # season on its own), "dynasty" (the all-time timeline), or "both". Has no
+    # effect on a league that isn't a dynasty. See wojbot.core.elo.ELO_REPORT_KEY.
+    "elo_report": "seasonal",
     # Channel id reported rumors get posted to. None until /setup rumorchannel
     # names one, and rumors reported before then are still recorded -- they just
     # go unannounced.

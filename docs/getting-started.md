@@ -116,6 +116,19 @@ later with `/verify add`, `/commish load`, `/setup defaultchannel`,
 channels.** A wire people open to read gossip is not necessarily where a notice
 or a report belongs, and a server may want either without the other.
 
+### 2a-i-b. Elo reports for a dynasty league
+
+```
+/setup eloreport ratings:Seasonal  → /elo run shows this season's ratings
+```
+
+A dynasty league keeps two sets of ratings: each season on its own, and the
+all-time timeline that carries ratings from one season into the next.
+`/setup eloreport` picks which one `/elo run` reports: **Seasonal** (the
+default), **Dynasty**, or **Both**. Both sets are rated and saved either way,
+so the choice is only what gets shown. A league that isn't a dynasty only has
+seasonal ratings, and this setting has no effect on it.
+
 ### 2a-ii. Restart notices
 
 ```

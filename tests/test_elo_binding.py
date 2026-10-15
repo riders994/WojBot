@@ -167,3 +167,31 @@ def test_two_configs_claiming_one_league_match_neither(monkeypatch):
     )
     sql = FakeSql({1990: (0, "Die Nasty")}, {0: [("sleeper", "1327122339342606336")]})
     assert run(elo.database_league(FakeBot(sql), 990)).key is None
+
+
+# --- which ratings a report shows -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "setting, expected",
+    [
+        (None, ["seasonal"]),
+        ("seasonal", ["seasonal"]),
+        ("dynasty", ["dynasty"]),
+        ("both", ["seasonal", "dynasty"]),
+        ("nonsense", ["seasonal"]),
+    ],
+)
+def test_report_scopes_for_a_dynasty_league(setting, expected):
+    assert elo.report_scopes(setting, True) == expected
+
+
+@pytest.mark.parametrize("setting", [None, "seasonal", "dynasty", "both"])
+def test_a_league_that_is_not_a_dynasty_only_reports_seasonal(setting):
+    assert elo.report_scopes(setting, False) == ["seasonal"]
+
+
+def test_servers_default_to_seasonal_reports():
+    from wojbot.core.defaults import DEFAULT_SERVER_CONFIG
+
+    assert DEFAULT_SERVER_CONFIG[elo.ELO_REPORT_KEY] == elo.REPORT_SEASONAL

@@ -1,11 +1,10 @@
 """Tests for :mod:`wojbot.core.dynasty`.
 
 The conversion itself is elo_system's, so it isn't re-tested here. What is: the
-bot's checks before handing over, and the one thing it changes underneath the
-package -- holding the current season's length at what has been rated, so a
-schedule that runs ahead of the games doesn't get replayed as results. The
-league and system are fakes shaped like the parts of elo_system these functions
-touch; a real conversion scrapes a platform.
+bot's checks before handing over, and the frames it lays down first so the
+dynasty timeline is seeded from the right season. The league and system are
+fakes shaped like the parts of elo_system these functions touch; a real
+conversion scrapes a platform.
 """
 
 from __future__ import annotations
@@ -103,32 +102,26 @@ def league_2024_to_2026(*, current_rated=0, current_length=25, **kwargs):
     return FakeLeague(seasons, fm, 2026, **kwargs)
 
 
-def test_replay_stops_at_the_last_rated_week_of_the_current_season():
-    league = league_2024_to_2026(current_rated=3)
+def test_conversion_replays_the_weeks_the_platform_has_played():
+    # Since elo_system 2.0.2 the length is the weeks played, so it is handed
+    # to the replay as it is.
+    league = league_2024_to_2026(current_rated=3, current_length=3)
     system = FakeSystem(league)
 
     result = dynasty.enable(system)
 
-    # The platform says 25 weeks; only 3 have been rated, so only 3 are replayed.
     assert league.lengths_seen == {2024: 24, 2025: 24, 2026: 3}
-    # ...and the platform's figure is back once the conversion is done.
-    assert league.seasons[2026]["current_season_length"] == 25
     assert result.enabled and result.start_weeks == {2024: 0, 2025: 25, 2026: 50}
     assert result.last_week == 53
     assert system.published == 1 and system.written == ["ratings"]
     assert league.dumped == 1
 
 
-def test_length_is_restored_even_when_the_conversion_fails():
-    league = league_2024_to_2026(current_rated=3)
-
-    def boom(to):
-        raise RuntimeError("scrape failed")
-
-    league.change_dynasty = boom
-    with pytest.raises(RuntimeError):
+def test_a_conversion_the_package_declines_is_not_reported_as_done():
+    league = league_2024_to_2026()
+    league.change_dynasty = lambda to: False
+    with pytest.raises(RuntimeError, match="declined"):
         dynasty.enable(FakeSystem(league))
-    assert league.seasons[2026]["current_season_length"] == 25
 
 
 def test_every_season_is_scraped_and_given_a_frame_first():
@@ -214,3 +207,4 @@ def test_last_seasonal_week(f, expected):
 def test_last_seasonal_week_stops_at_a_gap():
     f = frame(5).drop(columns=["week_3"])
     assert dynasty.last_seasonal_week(f) == 2
+
