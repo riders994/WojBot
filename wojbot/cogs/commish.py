@@ -17,7 +17,10 @@ connection is shared outside :class:`~wojbot.core.sql.SqlService`'s lock, the
 mutating commands here defer and run one operation at a time.
 
 Tiering: read-only ``/commish leagues|status|season list`` need admin/privileged
-access; the mutating ``/commish load|sync|publish|dump`` are commissioner-only.
+access; the mutating ``/commish load|sync|publish|dump|dynasty`` are commissioner-only.
+``dynasty`` is gated as mutating even when it only shows the setting, since one
+command that changes it with an argument and reads it without is easier to find
+than two.
 
 The ``/commish season`` subgroup owns the league's seasons — its league-years.
 ``add`` registers one more (the platform id, scraped on the spot, which is what
@@ -66,6 +69,7 @@ from discord import app_commands
 from discord.ext import commands
 from psycopg2 import sql as psql
 
+from ..core import dynasty
 from ..core.checks import is_admin, is_verified
 from ..core.discord_anon import CATEGORY_MANAGER, CATEGORY_SERVER
 from ..core.elo import (
@@ -281,6 +285,62 @@ class Commish(commands.Cog):
             return
         sections = ", ".join(f"`{k}`" for k in written) or "(nothing)"
         await interaction.followup.send(f"Backed up configs: {sections}.")
+
+    @group.command(
+        name="dynasty",
+        description="Show, or change, whether this league rates its seasons as one dynasty.",
+    )
+    @app_commands.describe(
+        enabled="True to convert to a dynasty, False to rate seasons on their own; "
+        "blank to just show the setting"
+    )
+    @is_admin()
+    async def dynasty_setting(
+        self, interaction: discord.Interaction, enabled: bool | None = None
+    ) -> None:
+        await interaction.response.defer(ephemeral=True)
+        system, league = await self._league(interaction)
+        if league is None:
+            return
+        work = {None: dynasty.status, True: dynasty.enable, False: dynasty.disable}[enabled]
+        try:
+            result = await asyncio.to_thread(work, system)
+        except ValueError as exc:
+            await interaction.followup.send(str(exc))
+            return
+        except Exception as exc:  # noqa: BLE001 - surface the reason to the commish
+            log.exception("dynasty change failed")
+            await interaction.followup.send(f"Couldn't change the dynasty setting: `{exc}`")
+            return
+        if enabled is not None:
+            self.bot.leagues.invalidate(interaction.guild_id)
+
+        name = (system.ratings_config or {}).get("league_name", system.league)
+        if not result.enabled:
+            lines = [f"**{name}** rates each season on its own."]
+            if enabled is False:
+                lines.append(
+                    "The dynasty ratings already on file are kept, just no longer "
+                    "updated — turning it back on picks up from them."
+                )
+            else:
+                lines.append("Convert it with `/commish dynasty enabled: True`.")
+            await interaction.followup.send("\n".join(lines))
+            return
+
+        verb = "is now" if enabled else "is"
+        lines = [f"**{name}** {verb} a dynasty."]
+        if result.flag_only:
+            lines.append(
+                "It has no ratings yet, so there was nothing to replay — the dynasty "
+                "timeline starts with the first week rated."
+            )
+        if result.start_weeks:
+            starts = ", ".join(f"{year} → week {week}" for year, week in result.start_weeks.items())
+            lines.append(f"• Seasons start at: {starts}")
+        if result.last_week is not None:
+            lines.append(f"• Rated through dynasty week {result.last_week}")
+        await interaction.followup.send("\n".join(lines))
 
     # --- /commish season: the league's seasons (league-years) ------------
 

@@ -216,8 +216,10 @@ Open to anyone:
 
 Commissioner-only: `/elo run` recomputes a week or a range, `/commish sync`
 scrapes members and teams, `/commish publish` runs and publishes ratings,
-`/commish season …` manages league-years, and `/commish dump` backs up the
-config files.
+`/commish season …` manages league-years, `/commish dump` backs up the
+config files, and `/commish dynasty` shows or changes whether the league rates
+its seasons as one continuous dynasty. Dynasty is a setting of the league, not
+the server, so it appears there rather than in `/setup show`.
 
 ## Permissions
 
@@ -228,7 +230,7 @@ role tier in their own server, and cannot be restricted.**
 | Tier | Configured as | Gates |
 |---|---|---|
 | **Bot owner** | not configurable | `/sql`, `/setup global` |
-| **Admin** | `admin_roles`, default `Commish` | `/commish load\|sync\|publish\|dump`, all of `/commish db`, `/commish season add\|platform\|current`, `/verify add\|remove` |
+| **Admin** | `admin_roles`, default `Commish` | `/commish load\|sync\|publish\|dump\|dynasty`, all of `/commish db`, `/commish season add\|platform\|current`, `/verify add\|remove` |
 | **Verified** | `verified_roles`, default `mods`, `Champion` | `/setup`, `/commish leagues\|status`, `/commish season list`, and the Commissioner source in `/rumor` |
 | **Normal** | not a role list | everything else — the default |
 | **Restricted** | `restricted_roles`, empty by default | *denied* every command bar `/help` and `/verify show` |
