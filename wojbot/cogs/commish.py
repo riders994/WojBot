@@ -78,7 +78,9 @@ from ..core.elo import (
     build_system,
     cached_system,
     configured_league,
+    database_league,
     get_or_build,
+    plan_load,
     runtime_key,
 )
 from ..core.format import clip as _clip
@@ -183,16 +185,28 @@ class Commish(commands.Cog):
         name="load", description="Load a league's Elo system and bind it to this server."
     )
     @app_commands.describe(
-        league="League key from sys_config (defaults to this server's, then the system default)"
+        league="League key from sys_config (defaults to the league this server is linked "
+        "to, then the system default)"
     )
     @is_admin()
     async def load(
         self, interaction: discord.Interaction, league: str | None = None
     ) -> None:
         await interaction.response.defer(ephemeral=True)
-        requested = league or self._configured_league(interaction.guild_id)
+        guild_id = interaction.guild_id
+        lookup_note = None
         try:
-            system = await self._build_system(requested)
+            link = await database_league(self.bot, guild_id)
+        except Exception as exc:  # noqa: BLE001 - load still works without the check
+            log.exception("Couldn't read this server's database link")
+            link = None
+            lookup_note = f"Couldn't check which league the database links here: `{exc}`"
+        plan = plan_load(league, self._configured_league(guild_id), link)
+        if plan.refusal is not None:
+            await interaction.followup.send(plan.refusal)
+            return
+        try:
+            system = await self._build_system(plan.key)
         except Exception as exc:  # noqa: BLE001 - surface the reason to the commish
             log.exception("Failed to load Elo system")
             await interaction.followup.send(f"Couldn't load league: `{exc}`")
@@ -200,8 +214,19 @@ class Commish(commands.Cog):
         concrete = system.league
         self.bot.runtime.set(runtime_key(concrete), system)
         if concrete:
-            self.bot.configs.set_guild(interaction.guild_id, {GUILD_LEAGUE_KEY: concrete})
-        await interaction.followup.send(self._describe(system, loaded=True))
+            self.bot.configs.set_guild(guild_id, {GUILD_LEAGUE_KEY: concrete})
+        notes = list(plan.notes or [])
+        if lookup_note:
+            notes.append(lookup_note)
+        if plan.uses_default:
+            notes.append(
+                f"No league is linked to this server, so this is the system default, "
+                f"`{concrete}`. If this server runs a different league, load it by name."
+            )
+        body = self._describe(system, loaded=True)
+        if notes:
+            body += "\n\n" + "\n".join(f"⚠️ {note}" for note in notes)
+        await interaction.followup.send(body)
 
     @group.command(
         name="sync", description="Sync members & teams to the database (scrapes each season)."
@@ -958,6 +983,25 @@ class Commish(commands.Cog):
         league's roster (with platform names) so you know who to link next.
         """
         await interaction.response.defer(ephemeral=True)
+        if league is None:
+            # Unnamed, the league is this server's Elo binding -- which is the
+            # thing that can be wrong. Migrating on it would move another
+            # league's database link onto this server, so when the server is
+            # already linked to something else, make the commish say which.
+            try:
+                link = await database_league(self.bot, interaction.guild_id)
+            except Exception:  # noqa: BLE001 - the check is a guard, not a requirement
+                log.exception("migrate: couldn't read this server's database link")
+                link = None
+            configured = self._configured_league(interaction.guild_id)
+            if link is not None and link.key is not None and link.key != configured:
+                await interaction.followup.send(
+                    f"This server is already linked to **{link.name}** (`{link.key}`), "
+                    f"but its Elo is bound to `{configured or 'the system default'}`. "
+                    "Name the league to migrate with `league:` — or, if the link is "
+                    "right, `/commish load` fixes the Elo binding instead."
+                )
+                return
         try:
             system = await get_or_build(self.bot, interaction.guild_id, league)
         except Exception as exc:  # noqa: BLE001 - surface the reason to the commish

@@ -310,6 +310,13 @@ doesn't think this server runs a league. Bind one with `/commish load` (or the
 wizard's league step) and adopt its database row with `/commish db migrate`;
 either binding is enough for the rumor settings to come back.
 
+**`/elo` shows another league's ratings, but rumors work** — the server's two
+league bindings disagree. Rumors go by the database link (`/commish db
+migrate`); Elo goes by the server's `elo_league`. Run `/commish load` with no
+league named: it loads the league the database links here and corrects
+`elo_league`. Naming a different league than the link is refused — moving the
+server is `/commish db migrate`'s job.
+
 **"The database is down"** — a bot owner can run `/sql reconnect`. `/sql status`
 shows the connection and how many queries are registered.
 
