@@ -1,0 +1,7 @@
+# Copy to sql_config.yml (gitignored: it holds a password). The Elo engine's
+# connection to the league warehouse.
+schema: fantasy_sports
+conn_uri: postgresql://USER:PASSWORD@127.0.0.1:5432/wojbot_db
+# Tokenise manager names before they reach the warehouse; the reversal maps
+# live in resources/anon/.
+anonymizer: true

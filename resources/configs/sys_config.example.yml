@@ -1,0 +1,19 @@
+# Copy to sys_config.yml. Names the Elo leagues this bot can load and where
+# their ratings are read from and written to. Every file named here is looked
+# up next to this one, in resources/configs/.
+
+# The league /commish load falls back to for a server the database links to
+# nothing (see /commish load).
+default_league: my_league
+
+# league key -> its ratings config (copy ratings.example.yml for each league).
+# The key is what /commish load league: and /setup take.
+ratings_configs:
+  my_league: ratings_my_league.yml
+
+# Where ratings live: csv (files under resources/ratings/<league>/) or sql.
+reader: csv
+writer: csv
+
+csv_config_name: csv_config.yml
+sql_config_name: sql_config.yml

@@ -1,0 +1,26 @@
+# Copy to ratings_<league key>.yml and name it in sys_config.yml. The bot
+# writes back to this file -- every scrape records each season's managers,
+# length and name -- so on a running bot, edit it only while the bot is down,
+# or the next write puts the old values back.
+
+league_name: My League
+platform: sleeper          # sleeper or fantrax
+league_type: nfl           # nfl or nba
+scoring: median            # nfl: median or default; nba: default, trinary or binary
+k: 60                      # how far one result moves a rating
+is_roto: false
+
+# One continuous timeline across seasons, with ratings carried over between
+# them. Change it with /commish dynasty rather than here: converting replays
+# the seasons already rated.
+is_dynasty: false
+osa_factor: 0.4            # dynasty only: how far ratings regress toward 1500 between seasons
+
+current_sports_year: 2026
+
+# One entry per season: the platform's own league id for that year. Add new
+# seasons with /commish season add, which scrapes and fills in the rest.
+seasons:
+  2026:
+    league_id: '0000000000000000000'
+    platform: sleeper      # pin each season to the platform it was played on

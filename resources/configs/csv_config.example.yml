@@ -1,0 +1,3 @@
+# Copy to csv_config.yml. Ratings CSVs are written under
+# resources/<write_loc>/<league key>/.
+write_loc: ratings

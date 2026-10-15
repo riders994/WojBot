@@ -32,6 +32,8 @@ The short version, once the bot is running and invited:
 
 ```bash
 cp .env.example .env    # fill in DISCORD_TOKEN and the database settings
+# The Elo configs: copy each template and fill it in (see docs/getting-started.md)
+cd resources/configs && for f in sys_config csv_config sql_config; do cp $f.example.yml $f.yml; done && cd -
 pip install -e .        # or: pip install -r requirements.lock && pip install -e . --no-deps
 wojbot
 ```
