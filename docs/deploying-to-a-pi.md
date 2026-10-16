@@ -728,7 +728,9 @@ Requires=postgresql@17-main.service
 Type=simple
 User=piders994
 WorkingDirectory=/home/piders994/activity/WojBot
+ExecStartPre=-/usr/local/bin/wojbot-update
 ExecStart=/home/piders994/activity/WojBot/.venv/bin/wojbot
+TimeoutStartSec=300
 Restart=always
 RestartSec=30
 
@@ -739,6 +741,12 @@ WantedBy=multi-user.target
 `User=` and both paths assume the OS account is `piders994`; fix all three
 together if it isn't. Note the unit runs on the Pi, so `weezy` — the
 workstation's account — is never the right answer here.
+
+**`ExecStartPre=` and `TimeoutStartSec=` are for the updater** covered at the end
+of this step. Write them now: the leading `-` covers a script that isn't there
+yet as readily as one that fails, so the unit starts normally in the window
+before you install it. If you'd rather not run the updater at all, drop both
+lines and everything else in this step stands.
 
 **`postgresql@17-main.service` carries the cluster version** — that's the `17` on
 trixie, `15` on bookworm, which is the number step 2 told you to note. Substitute
@@ -854,6 +862,200 @@ target, so pair it with:
 sudo systemctl enable systemd-time-wait-sync
 timedatectl        # "System clock synchronized: yes" once it has settled
 ```
+
+### Updating the checkout on start
+
+`ExecStartPre=` runs before `ExecStart=` in the same service, as the same user,
+and that's the hook for fetching the latest code and reconciling the venv
+against `requirements.lock` before the bot comes up. It makes `systemctl restart
+wojbot` the deploy command, so a change on `primary` reaches the Pi without an
+ssh session.
+
+Two things about this unit make the naive version actively worse than no updater
+at all, and both are why the script below is shaped the way it is.
+
+**A failed `ExecStartPre` fails the whole unit.** By default, if the pre-command
+exits non-zero, systemd never runs `ExecStart` and the service goes to `failed`.
+A bare `git pull` in front of this bot therefore lands squarely on the boot the
+section above is about: the power comes back, the gateway is still negotiating
+with the street, the fetch gets no DNS — and a bot that would have started
+perfectly well off the checkout already on the disk never starts at all. Worse,
+`failed` is terminal in a way the crash loop isn't: `Restart=always` doesn't
+cover a unit that never reached `ExecStart`. Unreachable network at boot has to
+mean "start what we've got", never "don't start".
+
+**`ExecStartPre` runs on automatic restarts too**, not just the ones you type.
+With `Restart=always` and `RestartSec=30`, a crash-looping bot fetches every 30
+seconds — and a bad commit that crashes on startup gets pulled in and retried
+forever instead of leaving the last good code running.
+
+So: the script never exits non-zero, and it rolls the checkout back rather than
+starting the bot against a venv it failed to build.
+
+**[ NEW PI ]** — `/usr/local/bin/wojbot-update`
+
+```bash
+#!/usr/bin/env bash
+# Fast-forward the checkout and reconcile the venv before the bot starts.
+#
+# Exits 0 unconditionally. Every failure here means "start the code already on
+# disk", which is always a better outcome than not starting: an unreachable
+# GitHub at boot must not be able to keep the bot down.
+set -uo pipefail
+
+REPO=/home/piders994/activity/WojBot
+BRANCH=primary
+
+cd "$REPO" || exit 0
+before=$(git rev-parse HEAD)
+
+# BatchMode + a hard timeout: a passphrase prompt or a black-holed connection
+# would otherwise hang here until TimeoutStartSec kills the whole start.
+export GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=10"
+export GIT_TERMINAL_PROMPT=0
+
+if ! timeout 60 git fetch --quiet origin "$BRANCH"; then
+    echo "fetch failed — starting $before as it is"
+    exit 0
+fi
+
+if ! git -c advice.diverging=false merge --ff-only --quiet "origin/$BRANCH"; then
+    echo "not a fast-forward (local commits, or a dirty tree) — starting $before"
+    exit 0
+fi
+
+after=$(git rev-parse HEAD)
+if [[ "$before" == "$after" ]]; then
+    echo "already current at $after"
+    exit 0
+fi
+echo "updated $before -> $after"
+
+# Only touch the venv when something that describes it actually changed.
+if ! git diff --quiet "$before" "$after" -- requirements.lock pyproject.toml; then
+    echo "dependencies changed — reinstalling"
+    if ! .venv/bin/pip install --quiet -r requirements.lock \
+      || ! .venv/bin/pip install --quiet -e . --no-deps; then
+        echo "pip failed — rolling back to $before and starting that"
+        git reset --hard --quiet "$before"
+    fi
+fi
+exit 0
+```
+
+```bash
+sudo install -o root -g root -m 755 wojbot-update /usr/local/bin/wojbot-update
+```
+
+The two lines this needs are already in the unit at the top of this step — the
+pre-command above the existing `ExecStart`, and a start timeout wide enough to
+contain a pip run:
+
+```ini
+ExecStartPre=-/usr/local/bin/wojbot-update
+ExecStart=/home/piders994/activity/WojBot/.venv/bin/wojbot
+TimeoutStartSec=300
+```
+
+The pieces that matter:
+
+**The leading `-` on `ExecStartPre=`** tells systemd to ignore a non-zero exit.
+The script already never returns one, so this is belt-and-braces for what the
+script can't cover: it's missing, it's not executable, or someone edits it later
+and breaks the `exit 0`.
+
+**Check which remote step 4 actually left you with**, because it decides which
+of the two environment lines is load-bearing. `git remote -v` in the checkout:
+
+- **HTTPS** (`https://github.com/riders994/WojBot.git`) — the repo is public, so
+  the fetch needs no credentials at all and `GIT_TERMINAL_PROMPT=0` is the line
+  that matters: it turns a credential prompt, in a context with nothing to
+  answer it, into an immediate failure rather than a hang.
+- **ssh** (`git@github.com:riders994/WojBot.git`) — the fetch authenticates with
+  the deploy key, and `ExecStartPre` runs in systemd's environment, where there
+  is no agent and no `SSH_AUTH_SOCK` inherited from your login shell. **The key
+  must be passphraseless**, and `github.com` must already be in
+  `/home/piders994/.ssh/known_hosts`, since under `BatchMode` an unknown host is
+  a refusal rather than a prompt. `BatchMode=yes` demotes both from a hang to a
+  logged "fetch failed" and a normal start — but a bot that silently never
+  updates is its own kind of broken, so verify rather than assume.
+
+Both lines are harmless when they don't apply, so the script carries them either
+way. Confirm the fetch works before you trust the updater:
+
+```bash
+cd ~/activity/WojBot && GIT_TERMINAL_PROMPT=0 git fetch --dry-run origin primary
+```
+
+**Check which key the remote actually uses.** On `wojingtonpost` the remote is
+`git@github-deploy:…`, an alias whose `IdentityFile` in `~/.ssh/config` named a
+`~/.ssh/deploy_key` that was never created — the real deploy key is
+`~/.ssh/wojdeploy`. Every start logged `fetch failed` and ran the old code, for
+weeks, until it was noticed on 2026-10-15. If the Pi seems behind `primary`,
+look at what the updater said before anything else:
+
+```bash
+journalctl -u wojbot --no-pager | grep wojbot-update | tail
+```
+
+**`git merge --ff-only`, not `git pull`.** A plain `pull` on a diverged branch
+drops you into a merge — or a conflicted tree — inside a systemd start. `--ff-only`
+refuses instead, and refusing is logged and survivable. It also means a
+deliberate local edit on the Pi is respected rather than silently reverted:
+you'll see "not a fast-forward" in the journal and know exactly why the deploy
+didn't take.
+
+**The rollback on pip failure.** Starting the bot against a half-installed venv
+is the one outcome worse than not updating, so a failed install returns the
+checkout to the commit that matched the venv you already have. `git reset --hard`
+is safe for everything step 5 copied over: it doesn't touch untracked or
+gitignored files, so `resources/anon/`, `resources/ratings/` and the per-guild
+configs under `resources/configs/` are never at risk.
+
+**The `git diff` guard on `requirements.lock` and `pyproject.toml`.** The venv is
+an editable install, so ordinary code changes are picked up with no pip
+involvement at all. Running pip on every start would add seconds to each restart
+to do nothing; running it only when the files that define the environment changed
+means a normal deploy is a fetch and a fast-forward.
+
+**`TimeoutStartSec=300`.** The default is 90 seconds and it covers `ExecStartPre`
+plus `ExecStart` together. That is not much of a margin on a Pi: a cold install
+of the lock is downloading and unpacking aarch64 wheels onto an SSD over the same
+domestic connection everything else here contends with, and anything without a
+wheel gets compiled on four Cortex-A76s. Blowing the timeout gets the start
+killed partway through, leaving exactly the broken venv the rollback exists to
+prevent.
+
+Check it end to end before you rely on it:
+
+**[ NEW PI ]**
+
+```bash
+sudo systemctl daemon-reload && sudo systemctl restart wojbot
+journalctl -u wojbot -n 30 --no-pager | grep -E 'updated|current|failed|rolling'
+```
+
+#### Know what you've signed up for
+
+This makes **restart mean deploy**, and those are two things you often want
+separately. Restarting to clear a stuck gateway connection at 1am now also ships
+whatever landed on `primary` since the last start, which is a surprise at the
+worst possible time — and on the Pi that restart is often the thing you're doing
+*because* something is already wrong. If that trade bothers you, drop
+`ExecStartPre` and run the same script deliberately instead:
+
+```bash
+/usr/local/bin/wojbot-update && sudo systemctl restart wojbot
+```
+
+**Not under `sudo`.** `ExecStartPre` runs as `User=piders994`, so that's the
+ownership every file in the checkout already has. Running the updater as root
+writes root-owned objects into `.git/`, and the next unattended run — back as
+`piders994` — then fails on them. Only the restart needs privilege.
+
+or put it on a timer that only restarts when the commit actually moved, which
+gets you unattended deploys without coupling them to every crash recovery. The
+script is written to be safe in all three modes; only the unit line changes.
 
 #### Deploying from Discord
 
@@ -979,6 +1181,8 @@ comparison.
 | `failed`, timestamp long after boot | a real crash. The traceback is in `journalctl` |
 | `inactive (dead)`, never started | the unit isn't enabled: `systemctl is-enabled wojbot` |
 | `active (running)` but silent in Discord | not a Pi problem. Token, gateway, or permissions |
+| `active (running)`, but on code you didn't expect | the updater fast-forwarded on restart. `journalctl -u wojbot \| grep updated` |
+| `failed`, timestamp long after boot, right after a deploy | the new commit crashes. `git log -1` on the Pi, then roll back by hand — the updater won't undo a commit that installs cleanly |
 
 `NRestarts=0` next to a `failed` service is the tell that no restart policy is in
 force — go back to the `systemctl show` check in step 7.

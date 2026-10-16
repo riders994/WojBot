@@ -20,15 +20,30 @@ dependencies = [
     # optional here: die_nasty is a Sleeper league, and without it every scrape
     # of one raises ImportError from SleeperScraper.
     "elo-system[sleeper]>=2.0.2",
+    # The weekly max-points-for report (wojbot/core/maxpf.py). The boxscores
+    # extra is what makes the hindsight methodology possible -- without it the
+    # package can only project, and a report on a week that has already been
+    # played should be reading what happened, not guessing at it.
+    "max-pf[boxscores]>=2.1.0",
 ]
 
 [project.optional-dependencies]
 # The rumor rules are the first thing here worth testing without a database or
-# a Discord connection; `pip install -e .[dev]` gets the runner.
-dev = ["pytest>=8"]
+# a Discord connection; `pip install -e .[dev]` gets the runner. pytest-asyncio
+# joined it with the scheduled tasks: the task store and the task runner are
+# async all the way down, and there is no useful way to test either from a
+# synchronous test.
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
 
 [project.scripts]
 wojbot = "wojbot.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["wojbot*"]
+
+[tool.pytest.ini_options]
+# strict is the default and the wanted behaviour -- only tests marked
+# @pytest.mark.asyncio are run in a loop, so a coroutine test that forgot the
+# marker fails loudly instead of being silently collected and never awaited.
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"

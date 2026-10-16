@@ -24,9 +24,18 @@ import threading
 from pathlib import Path
 
 # Category namespaces: server ids (dim_league) and manager ids (dim_manager) are
-# different value spaces, so they get their own token maps.
+# different value spaces, so they get their own token maps. Channels and roles
+# joined them with the scheduled tasks in sched_task, which stores where a task
+# posts and who it tags -- also Discord ids, also not the warehouse's business.
+#
+# A category is a namespace, not a type: the same real id in two categories gets
+# two unrelated surrogates, which is the point. CATEGORY_MANAGER is where user
+# ids live, because dim_manager.discord_id was the first column to hold one, and
+# a task's owner_id uses it too so that one person is one surrogate everywhere.
 CATEGORY_SERVER = "server"
 CATEGORY_MANAGER = "manager"
+CATEGORY_CHANNEL = "channel"
+CATEGORY_ROLE = "role"
 
 # Surrogates are positive and fit a signed 64-bit (Postgres bigint) column;
 # 2**62 leaves plenty of headroom below the 2**63-1 max.

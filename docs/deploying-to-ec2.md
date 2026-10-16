@@ -994,8 +994,13 @@ worst possible time. If that trade bothers you — and it reasonably might — d
 `ExecStartPre` and run the same script deliberately instead:
 
 ```bash
-sudo /usr/local/bin/wojbot-update && sudo systemctl restart wojbot
+/usr/local/bin/wojbot-update && sudo systemctl restart wojbot
 ```
+
+**Not under `sudo`.** `ExecStartPre` runs as `User=ubuntu`, which is the
+ownership the checkout already has. Running the updater as root writes root-owned
+objects into `.git/`, and the next unattended run — back as `ubuntu` — then fails
+on them. Only the restart needs privilege.
 
 or put it on a timer that only restarts when the commit actually moved, which
 gets you unattended deploys without coupling them to every crash recovery. The

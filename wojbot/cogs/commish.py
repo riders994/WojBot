@@ -84,6 +84,7 @@ from ..core.elo import (
     runtime_key,
 )
 from ..core.format import clip as _clip
+from ..core.weekly import PROCESS_ELO, is_enabled
 
 log = logging.getLogger(__name__)
 
@@ -288,8 +289,18 @@ class Commish(commands.Cog):
             await interaction.followup.send(f"Publish failed: `{exc}`")
             return
         self.bot.leagues.invalidate(interaction.guild_id)
+        note = ""
+        if await is_enabled(self.bot, interaction.guild_id, PROCESS_ELO):
+            # Not refused: a whole-season rebuild is a repair job, and the weekly
+            # process only ever rates forward from the last rated week. Worth
+            # saying, though -- the ratings in the channel are now from here
+            # rather than from Monday's run.
+            note = (
+                "\nThe weekly Elo process is on for this server; it picks up from "
+                "these ratings at its next run."
+            )
         await interaction.followup.send(
-            f"Published Elo ratings for `{system.league}` via `{system.writer_key}`."
+            f"Published Elo ratings for `{system.league}` via `{system.writer_key}`.{note}"
         )
 
     @group.command(name="dump", description="Back up the league's config files.")

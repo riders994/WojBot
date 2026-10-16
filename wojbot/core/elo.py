@@ -14,11 +14,14 @@ leagues). Each guild is bound to a league key via per-guild config
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 
 import yaml
 
 from .config import PROJECT_ROOT
+
+log = logging.getLogger(__name__)
 
 ELO_CONFIG_DIR = PROJECT_ROOT / "resources" / "configs"
 ELO_SYS_CONFIG = ELO_CONFIG_DIR / "sys_config.yml"
@@ -59,6 +62,57 @@ def configured_league(bot, guild_id: int | None) -> str | None:
     if guild_id is None:
         return None
     return bot.configs.get_guild(guild_id).get(GUILD_LEAGUE_KEY)
+
+
+def ratings_config(bot, guild_id: int | None) -> dict | None:
+    """This guild's league config as YAML, **without building an EloSystem**.
+
+    The cheap read. Everything else here constructs an :class:`EloSystem`, which
+    is right when the caller is about to rate a season and wrong when it only
+    wants to know what sport the league plays or which platform a season ran on
+    -- questions asked while somebody waits on a slash command.
+
+    Prefers the loaded system's config when there is one, so a commish who has
+    just edited a season sees the edit rather than the file behind it. None when
+    the server is bound to no league, or the files can't be read.
+    """
+    if guild_id is None:
+        return None
+
+    system = cached_system(bot, guild_id)
+    if system is not None and getattr(system, "ratings_config", None):
+        return system.ratings_config
+
+    league = configured_league(bot, guild_id)
+    if league is None:
+        return None
+    try:
+        sys_config = yaml.safe_load(ELO_SYS_CONFIG.read_text()) or {}
+        filename = (sys_config.get("ratings_configs") or {}).get(league)
+        if not filename:
+            return None
+        return yaml.safe_load((ELO_CONFIG_DIR / filename).read_text()) or {}
+    except (OSError, yaml.YAMLError):
+        # Callers use this to answer "which sport?" and "which platform?", and
+        # both have a sane fallback. An unreadable config file is not a reason
+        # to refuse to answer at all.
+        log.warning("Couldn't read the ratings config for %r", league, exc_info=True)
+        return None
+
+
+def season_platform(ratings: dict, year: int | None = None) -> str | None:
+    """Which platform a season ran on -- the season's own, then the league's.
+
+    Same rule the Elo package's dims follow: a season pinned by
+    ``/commish season platform`` keeps its platform when the league moves, and
+    an unpinned one follows the league. ``year`` defaults to the current season.
+    """
+    if not ratings:
+        return None
+    if year is None:
+        year = ratings.get("current_sports_year")
+    season = (ratings.get("seasons") or {}).get(year) or {}
+    return season.get("platform") or ratings.get("platform")
 
 
 async def build_system(bot, league: str | None):
