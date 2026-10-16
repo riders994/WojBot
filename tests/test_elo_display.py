@@ -1,4 +1,4 @@
-"""Tests for which members an Elo display shows (:mod:`wojbot.cogs.annuhlitucks`).
+"""Tests for which members an Elo display shows.
 
 A dynasty frame keeps a row for every manager who has ever played, so a
 returning manager picks up where they left off. Displays show only the league
@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import pandas as pd
 
-from wojbot.cogs.annuhlitucks import _in_league, _season_year
+from wojbot.cogs.annuhlitucks import _season_year
+from wojbot.core.elo_run import in_league as _in_league
 
 
 class League:

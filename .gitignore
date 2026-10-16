@@ -17,6 +17,10 @@ resources/ratings/
 # Only the *.example.* templates are tracked; copy one to start a file.
 resources/configs/**
 !resources/configs/*.example.*
+# Box scores the weekly max-PF report caches (wojbot/core/maxpf.py). Kept on
+# disk deliberately -- refetching a week of basketball-reference is slow and
+# impolite -- but it is fetched data, not source.
+.cache/
 
 # Python
 __pycache__/

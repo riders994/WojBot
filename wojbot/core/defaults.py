@@ -65,6 +65,11 @@ DEFAULT_SERVER_CONFIG: dict = {
     # channel people are reading, so a server opts in rather than finding out
     # the bot talks to it. See wojbot.core.restart.RESTART_NOTICE_KEY.
     "restart_notices": False,
+    # IANA timezone this server's wall-clock schedules are read in, so that
+    # "weekly on monday at 9am" means 9am to the league rather than 9am to
+    # whichever machine the bot runs on. UTC until /setup timezone names
+    # one. See wojbot.core.tasks.TIMEZONE_KEY.
+    "timezone": "UTC",
 }
 
 # Per-fantasy-league settings.

@@ -67,6 +67,8 @@ from ..core.elo import (
 from ..core.defaults import DEFAULT_CHANNEL_KEY
 from ..core.restart import RESTART_NOTICE_KEY
 from ..core.rumor import RUMOR_CHANNEL_KEY, league_for_guild
+from ..core.schedule import ScheduleError, resolve_zone
+from ..core.tasks import TIMEZONE_KEY
 
 log = logging.getLogger(__name__)
 
@@ -161,6 +163,26 @@ def describe_channel(configs, guild: discord.Guild, key: str) -> str:
         return "not set"
     channel = guild.get_channel(channel_id)
     return channel.mention if channel else f"`{channel_id}` (no such channel here)"
+
+
+def _local_now(config: dict) -> str:
+    """``it's 09:14 there`` — the configured timezone, made concrete.
+
+    A zone name is only checkable against a clock. Printing the local time next
+    to it is what turns "America/New_York" from a string somebody typed into
+    something an admin can confirm at a glance.
+    """
+    from datetime import datetime
+
+    name = config.get(TIMEZONE_KEY) or "UTC"
+    try:
+        zone = resolve_zone(name)
+    except ScheduleError:
+        # A stored zone this host no longer has: tzdata moved, or somebody wrote
+        # the file by hand. Same reasoning as describe_channel above -- say what
+        # is wrong rather than reading like it was never set.
+        return f"⚠️ this host doesn't know `{name}`, so times fall back to UTC"
+    return f"it's {datetime.now(zone):%H:%M} there"
 
 
 def _role_status(guild: discord.Guild, names) -> tuple[list[str], list[str]]:
@@ -632,6 +654,7 @@ class BotSetup(commands.Cog):
             lines.append(
                 "**Rumor channel:** n/a — this server doesn't run a league"
             )
+        lines.append(f"**Timezone:** `{config[TIMEZONE_KEY]}` — {_local_now(config)}")
         lines.append(
             f"**Default channel:** "
             f"{describe_channel(self.bot.configs, guild, DEFAULT_CHANNEL_KEY)}"
@@ -654,7 +677,7 @@ class BotSetup(commands.Cog):
         embed.set_footer(
             text="Roles: /verify · dad jokes: /dadjokes · league: /commish · "
                  "rumors: /setup rumorchannel · notices: /setup restartnotices · "
-                 "Elo reports: /setup eloreport · "
+                 "reminders: /setup timezone · Elo reports: /setup eloreport · "
                  "or walk through it with /setup wizard"
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
@@ -796,6 +819,46 @@ class BotSetup(commands.Cog):
                 "ratings — this takes effect if it becomes one."
             )
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+    @group.command(
+        name="timezone", description="Set the timezone this server's reminders use."
+    )
+    @app_commands.describe(zone="An IANA timezone, e.g. America/New_York")
+    @is_verified()
+    async def timezone(self, interaction: discord.Interaction, zone: str) -> None:
+        """What a wall-clock time means in this server.
+
+        Only reminders read this today, but it is a server setting rather than a
+        reminder setting on purpose: "9am" should mean the same thing in every
+        scheduled thing the bot grows, and nobody should have to say which 9am
+        twice.
+        """
+        try:
+            resolved = resolve_zone(zone.strip())
+        except ScheduleError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
+        # The canonical key, not what they typed: ZoneInfo accepts a name the
+        # autocomplete would never offer back, and storing that would make the
+        # setting unrecognisable next time somebody looked at it.
+        name = str(resolved)
+        self.bot.configs.set_guild(interaction.guild_id, {TIMEZONE_KEY: name})
+        config = self.bot.configs.get_guild(interaction.guild_id)
+        await interaction.response.send_message(
+            f"Wall-clock times in this server now mean **{name}** — "
+            f"{_local_now(config)}.\n\nSo `/remind channel weekly on monday at 9am` is "
+            "9am there, and it stays 9am across a daylight-saving change.",
+            ephemeral=True,
+        )
+
+    @timezone.autocomplete("zone")
+    async def _timezone_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        # The reminders cog owns the matching, so both fields offer one list.
+        from .reminders import timezone_choices
+
+        return timezone_choices(current)
 
     @group.command(name="dadjokes", description="Turn dad jokes on or off for this server.")
     @app_commands.describe(state="On, off, or follow whatever the bot-wide default is")

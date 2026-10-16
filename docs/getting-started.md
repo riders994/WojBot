@@ -232,6 +232,68 @@ Commissioner — limited to the Verified tier — is the only one who can put ou
 Once you've picked the leaker, you're only offered the releases they can
 actually get out, so you can't walk into a dead end.
 
+### Reminders
+
+```
+/remind me      in 90m                    text:set your lineup
+/remind channel weekly on monday at 9am   text:lineups lock tonight
+/remind server  friday 8pm                text:trade deadline  mentions:@Managers
+/remind list                              → what's set
+/remind cancel  reminder:12                 (also pause / resume)
+/remind help                              → every phrase it accepts
+```
+
+Three scopes, and what separates them is **who gets pinged**:
+
+| Command | Goes to | Can tag | Who can set it |
+|---|---|---|---|
+| `/remind me` | your DM | — | anyone, anywhere including a DM |
+| `/remind channel` | a channel | you | anyone, but only a channel **you** can post in |
+| `/remind server` | a channel | other people and roles | **Verified tier** |
+
+`/remind server` is the privileged one for one reason: it is the only scope that
+makes somebody else's phone buzz. Type `@` in `mentions` and pick from the list
+so Discord fills in the mention — anything that isn't a real mention is refused
+rather than quietly dropped, and `@everyone` is refused outright.
+
+Two commands are checked twice on purpose. `/remind channel` won't point at a
+channel you can't post in yourself — otherwise it would be a way to post
+somewhere you have no access to — and the destination is **re-checked when the
+reminder fires**, so somebody who has since lost access to a channel doesn't
+keep a standing post in it.
+
+#### Saying when
+
+Two kinds of repeat, deliberately two different words:
+
+- **`every` takes a number** — `every 3d`, `every 12h`. This is *elapsed time*,
+  so `every 24h` shifts by an hour when the clocks change.
+- **Calendar words hold their wall-clock time** — `daily at 9am`,
+  `weekly on monday at 9am`, `weekdays at 8:30am`, `weekends at 10am`,
+  `monthly on the 1st at 9am`, `hourly`. A 9am reminder is 9am on both sides of
+  a daylight-saving change.
+
+One-offs: `in 90m`, `in 2h30m`, `9am`, `noon`, `tomorrow 8am`, `friday 8pm`,
+`sep 1 at 9am`, `2026-09-01 14:00`. Or `cron 0 9 * * MON` if you would rather
+write it out. Anything it can't read is refused with the list of what works, and
+`every monday at 9am` tells you to write `weekly on monday at 9am` instead.
+
+Wall-clock times mean whatever the server's timezone says:
+
+```
+/setup timezone zone:America/New_York
+```
+
+UTC until somebody sets it, and `/setup show` prints it along with the current
+local time so it can be checked at a glance. One reminder can override it with
+`timezone:`.
+
+Reminders live in the database, so they survive a restart. A firing missed while
+the bot was down still goes out when it comes back, unless it is more than a day
+stale — a week-old lineup deadline is noise, and the next one is still wanted. A
+recurring reminder that has been failing says so in `/remind list` rather than
+just going quiet.
+
 ### Elo
 
 Open to anyone:
@@ -241,12 +303,79 @@ Open to anyone:
 /elo team        → one member's rating
 ```
 
+Verified: `/elo maxpf` — **max points for**, on demand. With no `week:` it is the
+season to date; with one it is that matchup period. It is the same report the
+weekly `maxpf` process posts (see below), so a league reads one set of numbers
+whoever asked for them. It takes a few minutes — longer the first time on a host,
+while the box scores are fetched — so it answers privately, keeps working, and
+posts the finished report into the channel. One at a time per server.
+
 Commissioner-only: `/elo run` recomputes a week or a range, `/commish sync`
 scrapes members and teams, `/commish publish` runs and publishes ratings,
 `/commish season …` manages league-years, `/commish dump` backs up the
 config files, and `/commish dynasty` shows or changes whether the league rates
 its seasons as one continuous dynasty. Dynasty is a setting of the league, not
 the server, so it appears there rather than in `/setup show`.
+
+### Weekly league processes
+
+The jobs the league runs by itself, once a week, reporting into a channel. There
+are two, and the machinery around them is there so the next one is a handler and
+a name:
+
+- **`elo`** — rates every week the platform has scored since the last run, and
+  publishes the ratings.
+- **`maxpf`** — the week's **max points for**: what every team actually scored
+  against what its best lineup could have (`M1`), how much it left on the table
+  (`Pot`), and how much the opponent's bench handed it (`Δ`). `/elo maxpf` is the
+  same report on demand, for the season to date or a week you missed. It is the
+  [`max-pf`](https://github.com/riders994/basketball_max_pf) package, run over
+  the last matchup period that finished, with realized box scores rather than
+  projections. **Nine-category basketball on Fantrax only** — that is what the
+  metric reads — so a football league isn't offered it, and `/weekly list` says
+  why rather than hiding it. The Fantrax league id comes from the season's
+  `league_id` in the Elo config, so there is nothing extra to configure.
+
+```
+/weekly list                              → what runs, when, and how it went
+/weekly add process:elo channel:#general  → add it (switched off)
+/weekly enable process:elo                → let it run on its schedule
+/weekly disable process:elo               → stop it running
+/weekly remove process:elo                → take it off the list
+/weekly run process:elo                   → run it now, off the schedule
+```
+
+All of it is Admin-tier bar `/weekly list`.
+
+**A process is added switched off.** Adding it says the league has one; enabling
+it says it may scrape a platform and publish ratings unattended from now on,
+which is worth deciding on purpose rather than by reading the command list.
+
+**Basketball servers run Monday at 5am; football servers Tuesday at 5am**, in the
+server's `/setup timezone`. That is the whole reason the day is a setting at all:
+platforms keep correcting stats after the games finish, and football's are not
+settled until the Monday night game has been scored. The sport comes from the
+loaded Elo league's `league_type`, so a server that has run `/commish load` never
+has to be told; `day:` and `time:` override it. The schedule is a calendar time,
+so 5am stays 5am across a clock change.
+
+**Once `elo` is on, it owns the ratings.** `/elo run` stops calculating and
+reports the schedule instead — when it last ran, when it next runs, and why the
+last run failed if it did. `/weekly run process:elo` is the way to force one, and
+it deliberately does *not* move the weekly run. `/weekly disable process:elo`
+hands the job back to `/elo run`. `/commish publish`, which rebuilds a whole
+season rather than rating forward, still works either way.
+
+A run that finds nothing new is not a failure and posts nothing — no newly
+scored week for `elo`, no finished matchup period for `maxpf`. A run that fails
+records why, and `/weekly list` shows it.
+
+`maxpf` reports the last matchup period that has *finished*, read off the
+league's own schedule, so an all-star break or a short week doesn't throw it off.
+It skips playoff periods (the metric is the regular season) and goes quiet
+between seasons rather than reposting March every Monday. Expect it to take a few
+minutes: it reads the league, then every relevant box score from
+basketball-reference, which it caches under `.cache/bref/`.
 
 ## Permissions
 
@@ -256,9 +385,9 @@ role tier in their own server, and cannot be restricted.**
 
 | Tier | Configured as | Gates |
 |---|---|---|
-| **Bot owner** | not configurable | `/sql`, `/setup global` |
-| **Admin** | `admin_roles`, default `Commish` | `/commish load\|sync\|publish\|dump\|dynasty`, all of `/commish db`, `/commish season add\|platform\|current`, `/verify add\|remove` |
-| **Verified** | `verified_roles`, default `mods`, `Champion` | `/setup`, `/commish leagues\|status`, `/commish season list`, and the Commissioner source in `/rumor` |
+| **Bot owner** | not configurable | `/sql`, `/scheduler`, `/setup global` |
+| **Admin** | `admin_roles`, default `Commish` | `/commish load\|sync\|publish\|dump\|dynasty`, all of `/commish db`, `/commish season add\|platform\|current`, `/weekly add\|remove\|enable\|disable\|run`, `/verify add\|remove` |
+| **Verified** | `verified_roles`, default `mods`, `Champion` | `/setup`, `/commish leagues\|status`, `/commish season list`, `/weekly list`, `/elo maxpf`, `/remind server`, and the Commissioner source in `/rumor` |
 | **Normal** | not a role list | everything else — the default |
 | **Restricted** | `restricted_roles`, empty by default | *denied* every command bar `/help` and `/verify show` |
 
@@ -313,6 +442,24 @@ it granted before.
 
 **"You aren't linked to a manager yet"** — nobody ran `/commish db linkuser` for
 that user. See [2c](#2c-link-the-managers).
+
+**A reminder didn't arrive** — `/remind list` first: a failed firing records why
+against the reminder, so a dead channel or a lost permission shows up there.
+`/scheduler status` (bot owner) says whether the clock is running and when it
+last ticked; `/scheduler tick` forces a pass without waiting. A reminder set for
+a time that has already passed is refused when you set it, not silently dropped.
+
+**A reminder fired at the wrong time** — check `/setup show`, which prints the
+server's timezone and the current local time there. Times are read in that zone,
+UTC until `/setup timezone` sets one. If it drifted by exactly an hour after a
+clock change, it was set with `every 24h` (elapsed time) where it wanted
+`daily at …` (a calendar time).
+
+**The weekly run didn't happen** — `/weekly list` first: it says whether the
+process is on, when it next runs, when it last ran, and why the last run failed
+if it did. A run that found no newly scored weeks posts nothing on purpose.
+`/scheduler status` (bot owner) says whether the clock behind it is running.
+`/weekly run process:elo` runs it there and then without touching the schedule.
 
 **"You don't have a team in any league this season"** — they're linked, but no
 team in the league's current season is theirs. Only the current season counts:

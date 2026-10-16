@@ -12,6 +12,29 @@ the latest week the platform has scored. Because it scrapes and rewrites
 ratings it is commissioner-gated, unlike the rest of the group. It overlaps
 ``/commish publish``, which runs a whole season in one go; this is the
 week-scoped version for keeping the current season up to date.
+
+The pipeline it drives lives in :mod:`wojbot.core.elo_run`, not here, because
+this cog is no longer the only thing that runs it: the **weekly Elo process**
+runs the same pipeline unattended (see :mod:`wojbot.core.weekly`). This cog is
+where that process is registered, since this is the cog that owns Elo.
+
+``/elo maxpf`` is the other half of the weekly max-PF report (see
+:mod:`wojbot.core.maxpf`): the process posts the week just gone every Monday,
+and this is how anybody Verified asks for the season to date — or for a week
+they missed — without waiting for a Monday. It is a **read**, which is why it is
+not commissioner-gated like ``/elo run``: it computes nothing the league keeps
+and writes nothing down.
+
+It is also the one command here that can take minutes, so it acknowledges
+privately and posts the finished report into the channel, rather than holding an
+interaction open longer than Discord allows one to be held.
+
+**Once the weekly process is on for a server, ``/elo run`` stops calculating.**
+It reports what the weekly run last produced and points at ``/weekly run elo``
+for a run right now. That is the whole intent of putting Elo on a schedule: the
+ratings a league reads should be the ones the weekly run published, not whatever
+the last person to type a command happened to compute — and a league whose
+ratings depend on who ran what, when, is a league arguing about ratings.
 """
 
 from __future__ import annotations
@@ -22,80 +45,33 @@ import logging
 import discord
 from discord import app_commands
 from discord.ext import commands
-from elo_system.tools.basics import WEEK_STR
 
-from ..core.checks import is_admin
-from ..core.dynasty import last_seasonal_week
-from ..core.elo import (
-    ELO_REPORT_KEY,
-    REPORT_DYNASTY,
-    REPORT_SEASONAL,
-    get_or_build,
-    report_scopes,
+from ..core.checks import is_admin, is_verified
+from ..core.elo import ELO_REPORT_KEY, get_or_build, ratings_config
+from ..core.maxpf import (
+    MaxPfError,
+    guild_today,
+    league_id_for_guild,
+    query_report,
+    render_report as render_maxpf_report,
 )
+from ..core.elo_run import (
+    MAX_ROWS,
+    MEDALS,
+    elo_process,
+    in_league,
+    member_names,
+    render_report,
+    run_weeks,
+)
+from ..core.weekly import PROCESS_ELO, describe_schedule, is_enabled, process_task
 
 log = logging.getLogger(__name__)
-
-MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
-
-# Rows in a run report before it is cut short, so a large league can't outgrow
-# an embed description.
-MAX_ROWS = 25
-
-# How a report names each kind of rating, for a league that has both.
-SCOPE_LABELS = {REPORT_SEASONAL: "season", REPORT_DYNASTY: "dynasty"}
-
-
 def _latest_series(frame):
     """Latest populated rating per member, sorted high to low (or None)."""
     if frame is None or getattr(frame, "empty", True):
         return None
     return frame.ffill(axis=1).iloc[:, -1].sort_values(ascending=False)
-
-
-def _parse_weeks(spec: str | None, length: int) -> list[int]:
-    """Weeks to run, from a ``5`` / ``3:8`` spec — or the latest scored week.
-
-    ``length`` is the season's scored-period count as the platform last
-    reported it, which is both the default week and the ceiling: rating a week
-    beyond it would invent a result.
-    """
-    if spec is None or not spec.strip():
-        if length < 1:
-            raise ValueError("No weeks have been scored for this season yet.")
-        return [length]
-    parts = [p.strip() for p in spec.strip().replace("-", ":").split(":")]
-    if len(parts) > 2 or not all(p.isdigit() for p in parts):
-        raise ValueError(f"Couldn't read '{spec}' as a week — try `5`, `3:8`, or leave it blank.")
-    first, last = int(parts[0]), int(parts[-1])
-    if last < first:
-        raise ValueError(f"'{spec}' runs backwards — put the earlier week first.")
-    if last > length:
-        raise ValueError(
-            f"Week {last} hasn't been scored yet — the season has {length} week(s) on file."
-        )
-    return list(range(first, last + 1))
-
-
-def _week_column(league, year: int, week: int) -> str:
-    """The column holding ``week``; dynasty weeks are offsets into one timeline."""
-    if league.is_dynasty:
-        week += league.seasons[year]["dynasty_start_week"]
-    return WEEK_STR.format(week)
-
-
-def _rated_frame(league, year: int):
-    """The frame a run writes into: the dynasty timeline, or this season's."""
-    fm = league.frame_manager
-    return fm.dynasty_elo if league.is_dynasty else fm.seasonal_elo[year]
-
-
-def _last_rated_week(league, year: int, frame) -> int:
-    """The last week rated without a gap. Week 0 always counts — it is the seed."""
-    week = 0
-    while frame.get(_week_column(league, year, week + 1)) is not None:
-        week += 1
-    return week
 
 
 def _season_year(system, seasons, season: int | None):
@@ -104,38 +80,6 @@ def _season_year(system, seasons, season: int | None):
         return season
     current = (system.ratings_config or {}).get("current_sports_year")
     return current if current in seasons else (max(seasons) if seasons else None)
-
-
-def _in_league(series, league, year):
-    """Only the members playing in ``year``, ranked among themselves.
-
-    A dynasty frame keeps a row for everyone who has ever played, since a
-    manager who comes back picks up where they left off -- but a standings
-    list that still ranks somebody who left two seasons ago reads as wrong.
-    A season with no members on file (never scraped) is left unfiltered
-    rather than shown empty.
-    """
-    members = {str(m) for m in ((league.seasons.get(year) or {}).get("league_members") or {})}
-    if series is None or not members:
-        return series
-    return series[[str(m) in members for m in series.index]]
-
-
-def _member_names(league) -> dict:
-    """member id -> team name. Seasons are walked in order, so the latest wins.
-
-    A dynasty frame is indexed across every season, so the names cannot be
-    taken from the one being run.
-    """
-    names: dict = {}
-    for _, season in sorted(league.seasons.items()):
-        for member_id, info in (season.get("league_members") or {}).items():
-            name = info.get("curr_name") or info.get("short_name")
-            if name:
-                names[member_id] = name
-    return names
-
-
 class Annuhlitucks(commands.Cog):
     """League Elo ratings and standings."""
 
@@ -147,6 +91,15 @@ class Annuhlitucks(commands.Cog):
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
+        # Registered here rather than in cogs/weekly.py: this is the cog that
+        # owns Elo, and the two load in an arbitrary order (see
+        # wojbot.core.weekly.ProcessRegistry). Registering only offers it --
+        # nothing runs until a server adds and enables it.
+        bot.weekly.register(elo_process())
+        # Guilds with a max-PF report in flight. A set rather than a lock: the
+        # second caller should be told it is already happening, not queued
+        # behind a run that takes minutes.
+        self._building: set[int] = set()
 
     async def _system(self, interaction: discord.Interaction):
         """Resolve (building if needed) this guild's EloSystem, or report why not."""
@@ -185,10 +138,10 @@ class Annuhlitucks(commands.Cog):
             if league.frame_manager is None:
                 system.load_frames(None)
             fm = league.frame_manager
-            names = _member_names(league)
+            names = member_names(league)
             if dynasty:
                 year = _season_year(system, league.seasons, season)
-                return "dynasty", _in_league(_latest_series(fm.dynasty_elo), league, year), names
+                return "dynasty", in_league(_latest_series(fm.dynasty_elo), league, year), names
             seasons = fm.seasonal_elo
             year = _season_year(system, seasons, season)
             if year not in seasons:
@@ -246,7 +199,7 @@ class Annuhlitucks(commands.Cog):
             if league.frame_manager is None:
                 system.load_frames(None)
             fm = league.frame_manager
-            names = _member_names(league)
+            names = member_names(league)
             if dynasty:
                 frame, label = fm.dynasty_elo, "dynasty"
                 year = _season_year(system, league.seasons, season)
@@ -265,7 +218,7 @@ class Annuhlitucks(commands.Cog):
             everyone = series
             if dynasty:
                 # Ranked among the league as it stands, like /elo standings.
-                series = _in_league(series, league, year)
+                series = in_league(series, league, year)
             # Match on the team name case-insensitively: exact first, else a
             # unique substring. The frame is indexed by platform account id —
             # a readable owner name on Fantrax, a bare number on Sleeper — so
@@ -346,100 +299,28 @@ class Annuhlitucks(commands.Cog):
         publish: bool = True,
     ) -> None:
         await interaction.response.defer()
+        # The hand-off. With the weekly process on, this server's ratings are
+        # something the schedule produces, and a command that quietly rated a
+        # different set of weeks off a fresh scrape would be a second answer to
+        # a question that is supposed to have one.
+        if await is_enabled(self.bot, interaction.guild_id, PROCESS_ELO):
+            await interaction.followup.send(embed=await self._weekly_embed(interaction))
+            return
+
         system = await self._system(interaction)
         if system is None:
             return
         setting = self.bot.configs.get_guild(interaction.guild_id).get(ELO_REPORT_KEY)
-
-        def _work():
-            league = system.elo_league
-            if league is None:
-                raise RuntimeError("League config not loaded")
-            if not league.loaded:
-                league.load()
-            scopes = report_scopes(setting, league.is_dynasty)
-            year = season if season is not None else league.current_sports_year
-            if year not in league.seasons:
-                raise ValueError(
-                    f"No season {year} is configured. Available: "
-                    + (", ".join(str(y) for y in sorted(league.seasons)) or "none")
-                )
-            # Re-scrape before anything else: which week is "current" is what the
-            # platform has scored now, not what an earlier command left cached.
-            league.add_league(year, overwrite=True)
-            # Then the ratings already on file, so rating one week continues the
-            # existing frame instead of starting from a blank one.
-            if league.frame_manager is None:
-                system.load_frames(None)
-            league.run_prep(year)
-
-            weeks = _parse_weeks(week, league.seasons[year].get("current_season_length") or 0)
-            # Week 0 seeds the season — and for a dynasty carries the previous
-            # season's ratings over — so it has to exist before any week is rated.
-            # overwrite=False leaves a seed already on file alone.
-            league.frame_manager.generate(year, overwrite=False)
-
-            # Each week is rated off the one before it, so a gap can't be
-            # skipped over. The engine reports that by quietly rating nothing,
-            # so it is caught here instead, while the fix can still be named.
-            frame = _rated_frame(league, year)
-            if weeks[0] > 0 and frame.get(_week_column(league, year, weeks[0] - 1)) is None:
-                rated = _last_rated_week(league, year, frame)
-                raise ValueError(
-                    f"Week {weeks[0] - 1} isn't rated yet, so week {weeks[0]} can't be. "
-                    f"Run `{rated + 1}:{weeks[-1]}` to catch up."
-                )
-            # A dynasty league rates the season's own frame too, off the same
-            # scores -- but where the season's previous week is missing, the
-            # engine skips it without a word and the dynasty week lands alone.
-            # The season can fall behind that way (a league rated before
-            # elo_system 2.0.2 rated only the dynasty), so it is checked as
-            # well. Running the range is safe: dynasty weeks already on file
-            # are left alone unless overwrite is set.
-            if league.is_dynasty and weeks[0] > 0:
-                season_rated = last_seasonal_week(league.frame_manager.seasonal_elo.get(year))
-                if season_rated < weeks[0] - 1:
-                    raise ValueError(
-                        f"This season's own ratings stop at week {season_rated}, so week "
-                        f"{weeks[0]} can't be rated for it. Run `{season_rated + 1}:"
-                        f"{weeks[-1]}` to catch up — the dynasty weeks already rated "
-                        "are left as they are."
-                    )
-
-            for target in weeks:
-                league.run(target, year, overwrite)
-
-            reports = []
-            for scope in scopes:
-                # Re-read the frame: a dynasty run rebuilds it rather than mutating.
-                if scope == REPORT_DYNASTY:
-                    frame, column = _rated_frame(league, year), lambda w: _week_column(league, year, w)
-                else:
-                    frame, column = league.frame_manager.seasonal_elo[year], WEEK_STR.format
-                if frame.get(column(weeks[-1])) is None:
-                    raise RuntimeError(
-                        f"Week {weeks[-1]} produced no ratings — the platform may not have "
-                        "scored it yet."
-                    )
-                after = frame[column(weeks[-1])].dropna().sort_values(ascending=False)
-                if scope == REPORT_DYNASTY:
-                    after = _in_league(after, league, year)
-                # What these weeks moved, against the week before them. Read after
-                # the run, since a season frame may only just have caught up to it.
-                deltas = {}
-                if weeks[0] > 0 and frame.get(column(weeks[0] - 1)) is not None:
-                    before = frame[column(weeks[0] - 1)].dropna()
-                    deltas = {
-                        member: float(after[member] - before[member])
-                        for member in after.index.intersection(before.index)
-                    }
-                reports.append((scope, after, deltas))
-            if publish:
-                system.publish()
-            return year, weeks, reports, league.is_dynasty, _member_names(league)
-
         try:
-            year, weeks, reports, is_dynasty, names = await asyncio.to_thread(_work)
+            result = await asyncio.to_thread(
+                run_weeks,
+                system,
+                spec=week,
+                season=season,
+                overwrite=overwrite,
+                publish=publish,
+                report=setting,
+            )
         except Exception as exc:  # noqa: BLE001 - surface the reason to the caller
             log.exception("elo run failed")
             await interaction.followup.send(f"Couldn't run those weeks: `{exc}`")
@@ -447,28 +328,14 @@ class Annuhlitucks(commands.Cog):
         if publish:
             self.bot.leagues.invalidate(interaction.guild_id)
 
-        span = f"week {weeks[0]}" if len(weeks) == 1 else f"weeks {weeks[0]}–{weeks[-1]}"
-        name = (system.ratings_config or {}).get("league_name", system.league)
-        embeds = []
-        for scope, after, deltas in reports:
-            lines = []
-            for rank, (member, rating) in enumerate(after.items(), start=1):
-                if rank > MAX_ROWS:
-                    lines.append(f"…and {len(after) - MAX_ROWS} more.")
-                    break
-                trend = ""
-                if (delta := deltas.get(member)) is not None:
-                    arrow = "▲" if delta > 0 else ("▼" if delta < 0 else "—")
-                    trend = f"  ({arrow} {abs(delta):.0f})"
-                label = names.get(member, member)
-                lines.append(f"{MEDALS.get(rank, f'`{rank:>2}`')} **{label}** — {rating:.0f}{trend}")
-            # Only a dynasty league has two kinds of rating to tell apart.
-            kind = f" ({SCOPE_LABELS[scope]})" if is_dynasty else ""
-            embeds.append(discord.Embed(
-                title=f"{name} — {year} {span}{kind}",
-                description="\n".join(lines),
+        embeds = [
+            discord.Embed(
+                title=f"{result.league_name} — {result.year} {result.span}{result.label(report)}",
+                description=render_report(report, result.names, max_rows=MAX_ROWS),
                 colour=discord.Colour.blurple(),
-            ))
+            )
+            for report in result.reports
+        ]
         embeds[-1].set_footer(
             text=(
                 f"Published via {system.writer_key}."
@@ -477,6 +344,146 @@ class Annuhlitucks(commands.Cog):
             )
         )
         await interaction.followup.send(embeds=embeds)
+
+    @group.command(
+        name="maxpf",
+        description="Max points for: the season to date, or one week.",
+    )
+    @app_commands.describe(
+        week="One matchup period (default: the whole season to date)"
+    )
+    @is_verified()
+    async def maxpf(
+        self, interaction: discord.Interaction, week: int | None = None
+    ) -> None:
+        guild_id = interaction.guild_id
+        try:
+            league_id = league_id_for_guild(self.bot, guild_id)
+        except MaxPfError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
+
+        # One at a time per server. Two of these at once means two scrapes of
+        # the same league and two runs of the same optimisation, for one report.
+        if guild_id in self._building:
+            await interaction.response.send_message(
+                "I'm already building a max-PF report for this server — it'll "
+                "post in the channel it was asked for.",
+                ephemeral=True,
+            )
+            return
+
+        scope = f"week {week}" if week is not None else "the season to date"
+        # Answered rather than deferred: a season report outlives the fifteen
+        # minutes a deferred interaction gets, and the report itself goes to the
+        # channel, so nothing important depends on this token still being good.
+        await interaction.response.send_message(
+            f"Working out max PF for {scope} — this takes a few minutes (longer "
+            "the first time, while the box scores are fetched). I'll post it here.",
+            ephemeral=True,
+        )
+
+        self._building.add(guild_id)
+        try:
+            report = await asyncio.to_thread(
+                query_report,
+                league_id,
+                guild_today(self.bot, guild_id),
+                self._league_name(guild_id),
+                week=week,
+            )
+        except MaxPfError as exc:
+            await self._quietly(interaction, str(exc))
+            return
+        except Exception as exc:  # noqa: BLE001 - surface the reason to the caller
+            log.exception("max-pf report failed")
+            await self._quietly(interaction, f"Couldn't build that report: `{exc}`")
+            return
+        finally:
+            self._building.discard(guild_id)
+
+        if report is None:
+            await self._quietly(
+                interaction,
+                "No matchup period has finished yet, so there's nothing to report.",
+            )
+            return
+
+        embed = discord.Embed(
+            title=report.title,
+            description=render_maxpf_report(report),
+            colour=discord.Colour.dark_teal(),
+        )
+        embed.set_footer(text=f"asked for by {interaction.user.display_name}")
+        channel = interaction.channel
+        if channel is None:  # no channel to post into; hand it back privately
+            await self._quietly(interaction, render_maxpf_report(report))
+            return
+        try:
+            await channel.send(
+                embed=embed, allowed_mentions=discord.AllowedMentions.none()
+            )
+        except discord.HTTPException as exc:
+            log.warning("Couldn't post a max-PF report", exc_info=exc)
+            await self._quietly(interaction, f"The report wouldn't post: `{exc}`")
+            return
+        await self._quietly(interaction, f"Posted the max-PF report for {scope}.")
+
+    def _league_name(self, guild_id: int | None) -> str:
+        """What the league calls itself, for the report's title."""
+        return (
+            (ratings_config(self.bot, guild_id) or {}).get("league_name")
+            or "The league"
+        )
+
+    @staticmethod
+    async def _quietly(interaction: discord.Interaction, message: str) -> None:
+        """Follow up, accepting that the interaction may have expired.
+
+        A max-PF run can outlast the fifteen minutes Discord keeps a token
+        alive. The report is already in the channel by then, so a dead token is
+        a lost note rather than a lost report.
+        """
+        try:
+            await interaction.followup.send(message, ephemeral=True)
+        except discord.HTTPException:
+            log.debug("The max-PF interaction had expired by the time it finished")
+
+    async def _weekly_embed(self, interaction: discord.Interaction) -> discord.Embed:
+        """What to say instead of rating, when the weekly process owns the job."""
+        embed = discord.Embed(
+            title="Elo runs on a schedule here",
+            description=(
+                "This server's ratings are produced by the weekly Elo process, "
+                "so `/elo run` doesn't calculate them any more. "
+                "`/weekly run process:elo` runs it right now, and "
+                "`/weekly disable process:elo` hands the job back to this command."
+            ),
+            colour=discord.Colour.blurple(),
+        )
+        try:
+            task = await process_task(self.bot, interaction.guild_id, PROCESS_ELO)
+        except Exception:  # noqa: BLE001 - the sentence above is the useful part
+            log.debug("Couldn't read the weekly Elo process", exc_info=True)
+            return embed
+        if task is None:  # switched off between the check and here; say nothing wrong
+            return embed
+        embed.add_field(name="When", value=describe_schedule(task), inline=False)
+        if task.next_fire_at is not None:
+            embed.add_field(
+                name="Next",
+                value=f"<t:{int(task.next_fire_at.timestamp())}:F>",
+                inline=False,
+            )
+        if task.last_fired_at is not None:
+            embed.add_field(
+                name="Last run",
+                value=f"<t:{int(task.last_fired_at.timestamp())}:R>",
+                inline=False,
+            )
+        if task.last_error:
+            embed.add_field(name="⚠️ Last run", value=task.last_error, inline=False)
+        return embed
 
 
 async def setup(bot: commands.Bot) -> None:

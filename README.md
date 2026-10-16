@@ -6,6 +6,15 @@ A Discord bot for a fantasy basketball league. Slash commands only.
   from a DM, and the bot posts them to a channel without naming the reporter.
 - **Elo** — standings and ratings, backed by the
   [`elo-system`](https://github.com/riders994/eloSystem) package.
+- **Reminders** — one-off or recurring, delivered to a DM, to a channel, or to a
+  channel with other people tagged. The last of those is the privileged one, and
+  the only one that can ping anybody but its author.
+- **Weekly league processes** — the jobs a league runs by itself once a week and
+  reports into a channel: the Elo run, and a
+  [`max-pf`](https://github.com/riders994/basketball_max_pf) report of what every
+  team scored against what its best lineup could have. Admin-gated, off until
+  somebody turns them on, and timed for after the platform's stat corrections
+  settle — basketball Monday, football Tuesday.
 - **Commissioner tools** — leagues, seasons, and the warehouse dimension tables.
 - **Setup** — per-server configuration with a guided wizard, and four permission
   tiers on top of it: Admin, Verified, Normal, and Restricted, each passing
@@ -42,14 +51,16 @@ Enable the **Message Content** intent in the Discord Developer Portal — the bo
 won't start without it.
 
 The warehouse schema lives in a separate repo (`leagueSQL`): `sql/ddl/schema.sql`
-first, then `sql/ddl/rumors.sql` and the `sql/dml/insert_*.sql` seeds. The bot's
-own database role only needs DML.
+first, then `sql/ddl/rumors.sql`, `sql/ddl/schedule.sql` and the
+`sql/dml/insert_*.sql` seeds. The bot's own database role only needs DML —
+`schedule.sql` carries its own grants, because the schema's default privileges
+don't reach a table created after they were set.
 
 ## Layout
 
 ```
 wojbot/cogs/       one cog per command group; discovered and loaded automatically
-wojbot/core/       config, permissions, database, and the rumor domain rules
+wojbot/core/       config, permissions, database, and the rumor/scheduling rules
 sql/queries/       named queries, registered at startup
 resources/         league configs and generated state
 tests/             pytest; `pip install -e .[dev]` gets the runner

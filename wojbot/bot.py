@@ -13,6 +13,8 @@ from .core.config_store import ConfigStore
 from .core.checks import Restricted, evaluate_restriction
 from .core.data import LeagueCache, LocalSource, Runtime
 from .core.discord_anon import DiscordAnon
+from .core.task_runner import TaskRunner
+from .core.weekly import ProcessRegistry
 
 log = logging.getLogger(__name__)
 
@@ -29,10 +31,22 @@ class WojBotV2(commands.Bot):
         #    source for now; the SQL-backed source (via bot.sql / rv_pytools) is
         #    wired in with the commish/elo cogs.
         #  - runtime: registry for live, non-persisted objects (scraper, elo engine).
+        #  - tasks: handlers for scheduled tasks, and the tick that fires them.
+        #  - weekly: the league processes a server may put on a weekly schedule.
         # The database connection itself is provided by the sql cog as bot.sql.
         self.configs = ConfigStore.load()
         self.leagues = LeagueCache(LocalSource(PROJECT_ROOT / "resources"))
         self.runtime = Runtime()
+        # Built here rather than in the scheduler cog because cogs load in an
+        # arbitrary order: the cog that *registers* a task handler and the cog
+        # that ticks the runner would otherwise have to agree on which loads
+        # first. See wojbot.core.task_runner.
+        self.tasks = TaskRunner(self)
+        # Same reasoning one layer up: the cog that *offers* a weekly process
+        # (the Elo cog offers the Elo one) and the cog that schedules them
+        # (cogs/weekly.py) load in an arbitrary order, so the registry they meet
+        # in is built here. See wojbot.core.weekly.
+        self.weekly = ProcessRegistry()
         # Bot-local surrogate map so real Discord IDs stay out of the shared DB
         # (see wojbot.core.discord_anon); used by the commish db commands.
         self.discord_anon = DiscordAnon(PROJECT_ROOT / "resources" / "anon" / "discord_ids.json")
